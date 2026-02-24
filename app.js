@@ -7,7 +7,7 @@ const sendBtn = document.getElementById('send-btn');
 const stopBtn = document.getElementById('stop-btn');
 const geminiKeyInput = document.getElementById('gemini-key');
 const githubTokenInput = document.getElementById('github-token');
-const githubRepoInput = document.getElementById('github-repo');
+const githubRepoSelect = document.getElementById('github-repo');
 const githubBranchInput = document.getElementById('github-branch');
 const saveSettingsBtn = document.getElementById('save-settings');
 const repoStatus = document.getElementById('repo-status');
@@ -244,25 +244,68 @@ function addMessageToCurrent(role, content) {
 function loadSettings() {
     geminiKeyInput.value = localStorage.getItem('gitchat_gemini_key') || '';
     githubTokenInput.value = localStorage.getItem('gitchat_github_token') || '';
-    githubRepoInput.value = localStorage.getItem('gitchat_github_repo') || '';
+    const savedRepo = localStorage.getItem('gitchat_github_repo') || '';
     githubBranchInput.value = localStorage.getItem('gitchat_github_branch') || 'main';
+    
     if (geminiKeyInput.value) setupAI();
-    if (githubTokenInput.value && githubRepoInput.value) testGitHubConnection();
+    if (githubTokenInput.value) {
+        fetchUserRepos(savedRepo);
+        testGitHubConnection();
+    }
 }
 
 function saveSettings() {
     localStorage.setItem('gitchat_gemini_key', geminiKeyInput.value.trim());
     localStorage.setItem('gitchat_github_token', githubTokenInput.value.trim());
-    localStorage.setItem('gitchat_github_repo', githubRepoInput.value.trim());
+    localStorage.setItem('gitchat_github_repo', githubRepoSelect.value);
     localStorage.setItem('gitchat_github_branch', githubBranchInput.value.trim());
     settingsContent.classList.remove('active');
     setupAI();
+    fetchUserRepos(githubRepoSelect.value);
     testGitHubConnection();
+}
+
+async function fetchUserRepos(selectedRepo = "") {
+    const token = githubTokenInput.value.trim();
+    if (!token) {
+        githubRepoSelect.innerHTML = '<option value="">Enter token first</option>';
+        return;
+    }
+
+    try {
+        const headers = { "Accept": "application/vnd.github.v3+json", "Authorization": `token ${token}` };
+        const res = await fetch(`https://api.github.com/user/repos?sort=updated&per_page=100`, { headers });
+        if (res.ok) {
+            const repos = await res.json();
+            githubRepoSelect.innerHTML = '';
+            
+            // Add current selected repo if it's not in the top 100 updated
+            if (selectedRepo && !repos.find(r => r.full_name === selectedRepo)) {
+                const opt = document.createElement('option');
+                opt.value = selectedRepo;
+                opt.textContent = selectedRepo;
+                githubRepoSelect.appendChild(opt);
+            }
+
+            repos.forEach(repo => {
+                const opt = document.createElement('option');
+                opt.value = repo.full_name;
+                opt.textContent = repo.full_name;
+                githubRepoSelect.appendChild(opt);
+            });
+            
+            if (selectedRepo) githubRepoSelect.value = selectedRepo;
+        } else {
+            githubRepoSelect.innerHTML = '<option value="">Error fetching repos</option>';
+        }
+    } catch (e) {
+        githubRepoSelect.innerHTML = '<option value="">Connection failed</option>';
+    }
 }
 
 // --- GitHub API Integration ---
 async function testGitHubConnection() {
-    currentRepo = githubRepoInput.value.trim();
+    currentRepo = githubRepoSelect.value;
     currentBranch = githubBranchInput.value.trim();
     const token = githubTokenInput.value.trim();
     if (!currentRepo || !token) { updateStatus("Missing credentials", "error"); return; }
