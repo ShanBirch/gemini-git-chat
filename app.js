@@ -84,6 +84,7 @@ function setupEventListeners() {
             chat.model = chatModelSelect.value;
             saveChats();
             delete chatSessions[currentChatId];
+            setupAI(); // Re-initialize with new model
         }
     });
 
@@ -152,7 +153,7 @@ function createNewChat() {
     const newChat = { id: Date.now().toString(), title: "New Chat", messages: [], model: chatModelSelect.value, createdAt: new Date().toISOString() };
     chats.unshift(newChat);
     currentChatId = newChat.id;
-    if (genAI) setupAI(); // Ensure model object exists for startChat
+    setupAI(); // Ensure model object exists for startChat
     if (genAI && currentAiModel) chatSessions[currentChatId] = currentAiModel.startChat({ history: [] });
     saveChats();
     renderChatList();
@@ -164,6 +165,7 @@ function switchChat(id) {
     currentChatId = id;
     renderChatList();
     renderCurrentChat();
+    setupAI();
     if (window.innerWidth <= 768) closeSidebar();
 }
 
@@ -193,7 +195,15 @@ function renderCurrentChat() {
     const chat = chats.find(c => c.id === currentChatId);
     if (!chat) return;
     mobileChatTitle.textContent = chat.title;
-    chatModelSelect.value = chat.model || 'gemini-3-flash-preview';
+    
+    // Validate model selection
+    const validModels = Array.from(chatModelSelect.options).map(o => o.value);
+    if (chat.model && validModels.includes(chat.model)) {
+        chatModelSelect.value = chat.model;
+    } else {
+        chatModelSelect.value = 'gemini-1.5-flash-latest';
+    }
+
     if (chat.messages.length === 0) {
         chatHistory.innerHTML = `<div class="empty-state"><h1>GitChat AI</h1><p>Your autonomous codebase agent. Connect your repository to get started.</p></div>`;
     } else {
@@ -373,7 +383,14 @@ function setupAI() {
     const key = geminiKeyInput.value.trim();
     if (!key) return;
     const chat = chats.find(c => c.id === currentChatId);
-    const modelName = (chat && chat.model) || chatModelSelect.value || "gemini-3-flash-preview";
+    let modelName = (chat && chat.model) || chatModelSelect.value || "gemini-1.5-flash-latest";
+    
+    // Ensure we don't use old/invalid names from history
+    const validModels = Array.from(chatModelSelect.options).map(o => o.value);
+    if (!validModels.includes(modelName)) {
+        modelName = "gemini-1.5-flash-latest";
+    }
+
     genAI = new GoogleGenerativeAI(key);
     currentAiModel = genAI.getGenerativeModel({ 
         model: modelName, 
