@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "https://esm.run/@google/generative-ai";
+import { createClient } from "https://esm.run/@supabase/supabase-js";
 
 // DOM Elements
 const chatHistory = document.getElementById('chat-history');
@@ -19,6 +20,9 @@ const attachBtn = document.getElementById('attach-btn');
 const imagePreviewContainer = document.getElementById('image-preview-container');
 const imagePreview = document.getElementById('image-preview');
 const removeImageBtn = document.getElementById('remove-image-btn');
+const supabaseUrlInput = document.getElementById('supabase-url');
+const supabaseKeyInput = document.getElementById('supabase-key');
+const enableSyncBtn = document.getElementById('enable-sync');
 
 // Mobile and Tabs
 const sidebar = document.getElementById('sidebar');
@@ -40,6 +44,8 @@ let currentAbortController = null;
 let queuedMessages = [];
 let buildStatusCheckInterval = null;
 let currentAttachedImage = null; // { mimeType: string, data: string (base64) }
+let supabase = null;
+let syncEnabled = false;
 
 // Chat State
 let chats = [];
@@ -120,6 +126,8 @@ function setupEventListeners() {
         imagePreviewContainer.style.display = 'none';
         imageInput.value = '';
     });
+
+    enableSyncBtn.addEventListener('click', initSupabase);
 }
 
 function stopGeneration() {
@@ -297,6 +305,42 @@ function saveSettings() {
     setupAI();
     fetchUserRepos(githubRepoSelect.value);
     testGitHubConnection();
+    if (syncEnabled) pushSettingsToCloud();
+}
+
+async function initSupabase() {
+    const url = supabaseUrlInput.value.trim();
+    const key = supabaseKeyInput.value.trim();
+    if (!url || !key) { alert("Please enter both Supabase URL and Key"); return; }
+
+    try {
+        supabase = createClient(url, key);
+        syncEnabled = true;
+        localStorage.setItem('gitchat_supabase_url', url);
+        localStorage.setItem('gitchat_supabase_key', key);
+        enableSyncBtn.textContent = "Cloud Sync Active 🟢";
+        enableSyncBtn.style.color = "var(--success)";
+        pushSettingsToCloud();
+        pushChatsToCloud();
+    } catch (e) {
+        alert("Supabase connection failed: " + e.message);
+    }
+}
+
+async function pushSettingsToCloud() {
+    if (!supabase) return;
+    const settings = {
+        gemini_key: geminiKeyInput.value.trim(),
+        github_token: githubTokenInput.value.trim(),
+        github_repo: githubRepoSelect.value,
+        github_branch: githubBranchInput.value.trim()
+    };
+    await supabase.from('settings').upsert({ id: 'user_settings', data: settings });
+}
+
+async function pushChatsToCloud() {
+    if (!supabase) return;
+    await supabase.from('app_state').upsert({ id: 'chat_sessions', data: chats });
 }
 
 async function fetchUserRepos(selectedRepo = "") {

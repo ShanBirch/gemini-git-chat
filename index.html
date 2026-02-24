@@ -83,6 +83,15 @@
                             <div class="status-indicator"></div>
                             <span>Not connected</span>
                         </div>
+
+                        <div class="section-divider" style="height:1px; background:var(--border); margin:12px 0;"></div>
+                        
+                        <div class="input-group">
+                            <label><span class="emoji">☁️</span> Supabase Sync (Optional)</label>
+                            <input type="text" id="supabase-url" placeholder="https://your-project.supabase.co">
+                            <input type="password" id="supabase-key" placeholder="Anon/Public Key" style="margin-top:8px;">
+                        </div>
+                        <button id="enable-sync" class="btn primary full-width" style="background:rgba(16, 185, 129, 0.1); color:var(--success); border:1px solid rgba(16, 185, 129, 0.2);">Enable Cloud Sync</button>
                     </div>
                 </div>
             </div>
