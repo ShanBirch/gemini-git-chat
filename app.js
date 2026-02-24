@@ -47,6 +47,11 @@ let currentAttachedImage = null; // { mimeType: string, data: string (base64) }
 let supabase = null;
 let syncEnabled = false;
 
+// Pull to refresh state
+let touchStart = 0;
+let pullDistance = 0;
+const PULL_THRESHOLD = 80;
+
 // Chat State
 let chats = [];
 let currentChatId = null;
@@ -148,6 +153,41 @@ function setupEventListeners() {
             }
         }
     });
+
+    // Pull to Refresh Logic
+    const pullToRefreshEl = document.getElementById('pull-to-refresh');
+    const appEl = document.getElementById('app');
+
+    window.addEventListener('touchstart', (e) => {
+        if (chatHistory.scrollTop === 0) {
+            touchStart = e.touches[0].pageY;
+        }
+    }, { passive: true });
+
+    window.addEventListener('touchmove', (e) => {
+        const touchCurrent = e.touches[0].pageY;
+        if (chatHistory.scrollTop === 0 && touchCurrent > touchStart) {
+            pullDistance = Math.min((touchCurrent - touchStart) * 0.5, 120);
+            pullToRefreshEl.style.transform = `translateY(${pullDistance}px)`;
+            appEl.style.transform = `translateY(${pullDistance}px)`;
+            if (pullDistance >= PULL_THRESHOLD) {
+                pullToRefreshEl.querySelector('span').textContent = "Release to refresh...";
+            } else {
+                pullToRefreshEl.querySelector('span').textContent = "Pull to refresh...";
+            }
+        }
+    }, { passive: true });
+
+    window.addEventListener('touchend', () => {
+        if (pullDistance >= PULL_THRESHOLD) {
+            pullToRefreshEl.querySelector('span').textContent = "Refreshing...";
+            window.location.reload();
+        } else {
+            pullToRefreshEl.style.transform = `translateY(0)`;
+            appEl.style.transform = `translateY(0)`;
+        }
+        pullDistance = 0;
+    }, { passive: true });
 }
 
 function stopGeneration() {
