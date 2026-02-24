@@ -24,51 +24,31 @@
     left: 0;
     width: 100%;
     height: 60px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-    z-index: 2000;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-secondary); font-size: 0.9rem; z-index: 2000;
     transition: transform 0.2s ease;
 }
-.refresh-content {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
+.refresh-content { display: flex; align-items: center; gap: 10px; }
 .refresh-spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid var(--glass-border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
+    width: 16px; height: 16px; border: 2px solid var(--glass-border);
+    border-top-color: var(--accent); border-radius: 50%;
     animation: spin 1s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 body {
-    font-family: var(--font-sans);
-    background-color: var(--bg-main);
-    color: var(--text-primary);
-    height: 100vh;
-    height: 100dvh;
-    overflow: hidden;
-    background-image: radial-gradient(circle at 50% 50%, #1e1b4b 0%, #0a0b10 100%);
+    font-family: var(--font-sans); background-color: var(--bg-main);
+    color: var(--text-primary); height: 100vh; height: 100dvh;
+    overflow: hidden; background-image: radial-gradient(circle at 50% 50%, #1e1b4b 0%, #0a0b10 100%);
 }
 
 #app { display: flex; height: 100%; position: relative; transition: transform 0.2s ease; }
 
 /* --- Sidebar --- */
 #sidebar {
-    width: 280px;
-    background: var(--bg-sidebar);
-    backdrop-filter: blur(20px);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    z-index: 100;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 280px; background: var(--bg-sidebar); backdrop-filter: blur(20px);
+    border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    z-index: 100; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sidebar-header {
@@ -93,6 +73,8 @@ body {
 }
 .build-status.building { color: #fbbf24; background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.2); }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+
+#new-chat-btn { margin-bottom: 16px; }
 
 .chat-list { display: flex; flex-direction: column; gap: 4px; }
 
