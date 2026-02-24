@@ -38,6 +38,7 @@ let currentBranch = "main";
 let isProcessing = false;
 let currentAbortController = null;
 let queuedMessages = [];
+let buildStatusCheckInterval = null;
 let currentAttachedImage = null; // { mimeType: string, data: string (base64) }
 
 // Chat State
@@ -51,6 +52,7 @@ function init() {
     loadChats();
     setupEventListeners();
     marked.setOptions({ breaks: true, gfm: true });
+    startBuildStatusPolling();
 }
 
 // Event Listeners
@@ -64,6 +66,7 @@ function setupEventListeners() {
         const originalText = saveSettingsBtn.textContent;
         saveSettingsBtn.textContent = "Saved ✓";
         setTimeout(() => saveSettingsBtn.textContent = originalText, 2000);
+        startBuildStatusPolling(); // Restart with new settings
     });
     sendBtn.addEventListener('click', handleSend);
     stopBtn.addEventListener('click', stopGeneration);
@@ -248,6 +251,27 @@ function addMessageToCurrent(role, content) {
     }
     chat.messages.push({ role, content, image: currentAttachedImage });
     saveChats();
+    
+    // Auto-name after first AI response
+    if (role === 'ai' && chat.messages.length <= 3 && chat.title === "New Chat") {
+        generateAutoTitle(chat);
+    }
+}
+
+async function generateAutoTitle(chat) {
+    if (!genAI || !currentAiModel) return;
+    try {
+        const historyText = chat.messages.map(m => `${m.role}: ${m.content.substring(0, 100)}`).join('\n');
+        const prompt = `Summarize this conversation into a short, catchy 2-4 word title. Respond with ONLY the title. No quotes. \n\nConversation:\n${historyText}`;
+        const result = await currentAiModel.generateContent(prompt);
+        const title = result.response.text().trim().replace(/["']/g, '');
+        if (title && title.length < 50) {
+            chat.title = title;
+            saveChats();
+            renderChatList();
+            mobileChatTitle.textContent = title;
+        }
+    } catch (e) { console.error("Auto-title failed", e); }
 }
 
 // Settings Management
@@ -593,6 +617,40 @@ async function handleSend() {
             handleSend(); // Trigger next queue if any
         }
     }
+}
+
+// --- Build Status ---
+function startBuildStatusPolling() {
+    if (buildStatusCheckInterval) clearInterval(buildStatusCheckInterval);
+    updateBuildStatus();
+    buildStatusCheckInterval = setInterval(updateBuildStatus, 30000); // Check every 30s
+}
+
+async function updateBuildStatus() {
+    const statusEl = document.getElementById('build-status-indicator');
+    const statusText = document.getElementById('build-status-text');
+    if (!githubHeaders || !currentRepo) return;
+
+    try {
+        // Fetch latest commit/workflow checks
+        const res = await fetch(`https://api.github.com/repos/${currentRepo}/commits/${currentBranch}/check-runs`, { headers: githubHeaders });
+        if (res.ok) {
+            const data = await res.json();
+            const lastCheck = data.check_runs[0];
+            if (!lastCheck) return;
+
+            if (lastCheck.status === 'in_progress') {
+                statusEl.className = 'build-status building';
+                statusText.textContent = 'Building...';
+            } else if (lastCheck.conclusion === 'success') {
+                statusEl.className = 'build-status';
+                statusText.textContent = 'Live';
+            } else if (lastCheck.conclusion === 'failure') {
+                statusEl.className = 'build-status error';
+                statusText.textContent = 'Failed';
+            }
+        }
+    } catch (e) { console.log("Build status check failed"); }
 }
 
 document.addEventListener('DOMContentLoaded', init);
