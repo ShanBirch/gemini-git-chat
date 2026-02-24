@@ -196,6 +196,17 @@ body {
     background: var(--glass-bg); border: 1px solid var(--glass-border); backdrop-filter: blur(10px);
     border-radius: 16px; padding: 10px; margin-bottom: 8px; display: inline-flex;
 }
+.preview-wrapper {
+    position: relative; width: 60px; height: 60px; border-radius: 12px; overflow: hidden;
+}
+.preview-wrapper img {
+    width: 100%; height: 100%; object-fit: cover;
+}
+.remove-btn {
+    position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.6);
+    color: #fff; border: none; width: 18px; height: 18px; border-radius: 50%;
+    font-size: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }

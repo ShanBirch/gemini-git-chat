@@ -128,6 +128,26 @@ function setupEventListeners() {
     });
 
     enableSyncBtn.addEventListener('click', initSupabase);
+
+    chatInput.addEventListener('paste', (e) => {
+        const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+        for (let item of items) {
+            if (item.type.indexOf('image') !== -1) {
+                const file = item.getAsFile();
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const base64Data = event.target.result.split(',')[1];
+                    currentAttachedImage = {
+                        mimeType: file.type,
+                        data: base64Data
+                    };
+                    imagePreview.src = event.target.result;
+                    imagePreviewContainer.style.display = 'flex';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+    });
 }
 
 function stopGeneration() {
