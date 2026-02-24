@@ -489,19 +489,45 @@ async function ghReadFile(path) {
 async function ghWriteFile(path, content, commit_message) {
     try {
         let sha = undefined;
+        // 1. Get current file SHA if it exists
         const getRes = await fetch(`https://api.github.com/repos/${currentRepo}/contents/${path}?ref=${currentBranch}`, { headers: githubHeaders });
-        if (getRes.ok) sha = (await getRes.json()).sha;
+        if (getRes.ok) {
+            const getData = await getRes.json();
+            sha = getData.sha;
+        }
+
+        // 2. Prepare content - Robust Base64 for UTF-8
         const bytes = new TextEncoder().encode(content);
         let binaryString = "";
-        for (let i=0; i<bytes.byteLength; i++) binaryString += String.fromCharCode(bytes[i]);
-        const body = { message: commit_message || `Update ${path}`, content: btoa(binaryString), branch: currentBranch };
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binaryString += String.fromCharCode(bytes[i]);
+        }
+        const base64Content = btoa(binaryString);
+
+        // 3. Send update
+        const body = { 
+            message: commit_message || `Update ${path}`, 
+            content: base64Content, 
+            branch: currentBranch 
+        };
         if (sha) body.sha = sha;
+
         const putRes = await fetch(`https://api.github.com/repos/${currentRepo}/contents/${path}`, {
-            method: 'PUT', headers: { ...githubHeaders, "Content-Type": "application/json" }, body: JSON.stringify(body)
+            method: 'PUT',
+            headers: { ...githubHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify(body)
         });
-        if (!putRes.ok) throw new Error(`${putRes.status}`);
-        return `Successfully wrote to ${path}!`;
-    } catch (e) { return `Error: ${e.message}`; }
+
+        if (!putRes.ok) {
+            const errData = await putRes.json();
+            throw new Error(`GitHub Error ${putRes.status}: ${errData.message || res.statusText}`);
+        }
+
+        return `Successfully wrote to ${path}! Changes pushed to branch '${currentBranch}'.`;
+    } catch (e) { 
+        console.error("Write File Error:", e);
+        return `Error writing file: ${e.message}`; 
+    }
 }
 
 const toolsMap = { list_files: (args) => ghListFiles(args.path || ""), read_file: (args) => ghReadFile(args.path), write_file: (args) => ghWriteFile(args.path, args.content, args.commit_message) };
@@ -535,9 +561,10 @@ function setupAI() {
         }],
         systemInstruction: `You are GitChat AI, an expert autonomous software engineer. 
 Your current model is ${modelName}. 
-You have direct access to the user's GitHub repository. 
+You have direct access to the user's GitHub repository '${currentRepo}' on branch '${currentBranch}'. 
 Use tools to read/write files and explain your actions. 
-If a tool fails, explain why and suggest an alternative.`
+CRITICAL: When updating code, ensure you provide the FULL content of the file to 'write_file'. 
+If a tool fails, read the error message carefully and explain the exact GitHub error to the user.`
     });
 }
 
