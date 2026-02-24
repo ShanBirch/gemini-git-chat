@@ -74,9 +74,9 @@ body {
 .build-status.building { color: #fbbf24; background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.2); }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
 
-#new-chat-btn { margin-bottom: 16px; }
+#new-chat-btn { margin-bottom: 24px; }
 
-.chat-list { display: flex; flex-direction: column; gap: 4px; }
+.chat-list { display: flex; flex-direction: column; gap: 8px; }
 
 .chat-tab {
     display: flex; align-items: center; justify-content: space-between;
