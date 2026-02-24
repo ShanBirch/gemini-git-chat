@@ -51,6 +51,7 @@ let syncEnabled = false;
 let touchStart = 0;
 let pullDistance = 0;
 const PULL_THRESHOLD = 80;
+let wakeLock = null;
 
 // Chat State
 let chats = [];
@@ -133,6 +134,22 @@ function setupEventListeners() {
     });
 
     enableSyncBtn.addEventListener('click', initSupabase);
+    
+    document.getElementById('verify-models-link')?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const key = geminiKeyInput.value.trim();
+        if (!key) { alert("Enter an API key first."); return; }
+        try {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+            const data = await res.json();
+            if (data.models) {
+                const names = data.models.map(m => m.name.replace('models/', '')).join('\n');
+                alert("Your key has access to:\n" + names);
+            } else {
+                alert("Could not list models. Check your key.");
+            }
+        } catch (e) { alert("Error: " + e.message); }
+    });
 
     chatInput.addEventListener('paste', (e) => {
         const items = (e.clipboardData || e.originalEvent.clipboardData).items;
@@ -249,6 +266,21 @@ function deleteChat(id, e) {
     saveChats(); renderChatList(); renderCurrentChat();
 }
 
+// --- Wake Lock ---
+async function requestWakeLock() {
+    if ('wakeLock' in navigator) {
+        try {
+            wakeLock = await navigator.wakeLock.request('screen');
+        } catch (err) { console.log("WakeLock failed"); }
+    }
+}
+
+function releaseWakeLock() {
+    if (wakeLock) {
+        wakeLock.release().then(() => wakeLock = null);
+    }
+}
+
 function renderChatList() {
     chatListEl.innerHTML = '';
     chats.forEach(chat => {
@@ -327,11 +359,13 @@ function addMessageToCurrent(role, content) {
 }
 
 async function generateAutoTitle(chat) {
-    if (!genAI || !currentAiModel) return;
+    if (!genAI) return;
     try {
+        // Always use Flash for titles to be fast/stable/cheap
+        const titleModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const historyText = chat.messages.map(m => `${m.role}: ${m.content.substring(0, 100)}`).join('\n');
         const prompt = `Summarize this conversation into a short, catchy 2-4 word title. Respond with ONLY the title. No quotes. \n\nConversation:\n${historyText}`;
-        const result = await currentAiModel.generateContent(prompt);
+        const result = await titleModel.generateContent(prompt);
         const title = result.response.text().trim().replace(/["']/g, '');
         if (title && title.length < 50) {
             chat.title = title;
@@ -339,7 +373,7 @@ async function generateAutoTitle(chat) {
             renderChatList();
             mobileChatTitle.textContent = title;
         }
-    } catch (e) { console.error("Auto-title failed", e); }
+    } catch (e) { console.warn("Auto-title used fallback", e); }
 }
 
 // Settings Management
@@ -534,11 +568,20 @@ const toolsMap = { list_files: (args) => ghListFiles(args.path || ""), read_file
 
 function mapModelName(name) {
     if (!name) return "gemini-3-flash-preview";
-    // Fix stale IDs from previous sessions
-    if (name === "gemini-3.1-pro" || name === "gemini-3.1-pro-exp") return "gemini-3.1-pro-preview";
-    if (name === "gemini-3.0-flash" || name === "gemini-3-flash") return "gemini-3-flash-preview";
-    if (name === "gemini-2.0-flash-exp") return "gemini-2.0-flash";
-    return name;
+    let normalized = name.toLowerCase().trim();
+    
+    // Add 'gemini-' prefix if missing
+    if (!normalized.startsWith("gemini-")) {
+        normalized = "gemini-" + normalized;
+    }
+
+    // Fix stale IDs and experimental suffixes
+    if (normalized.includes("3.1-pro")) return "gemini-3.1-pro-preview-customtools";
+    if (normalized.includes("3-pro")) return "gemini-3-pro-preview-customtools";
+    if (normalized.includes("3-flash") || normalized.includes("3.0-flash")) return "gemini-3-flash-preview";
+    if (normalized.includes("2.0-flash")) return "gemini-2.0-flash";
+    
+    return normalized;
 }
 
 // --- AI Integration ---
@@ -570,6 +613,10 @@ If a tool fails, read the error message carefully and explain the exact GitHub e
 
 function getChatSession() {
     if (!chatSessions[currentChatId]) {
+        if (!currentAiModel) {
+            alert("Model not initialized. Please check your Gemini Key in settings.");
+            return null;
+        }
         const chat = chats.find(c => c.id === currentChatId);
         const history = chat ? chat.messages.map(m => {
             const parts = [{ text: m.content }];
@@ -663,6 +710,7 @@ async function handleSend() {
 
     // Processing start
     setProcessingState(true);
+    requestWakeLock();
     let messageToSend = text;
     let imageDataToSend = currentAttachedImage;
 
@@ -746,9 +794,16 @@ async function handleSend() {
         if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
             appendMessageOnly('system', 'Generation stopped.');
         } else {
-            appendMessageOnly('ai', `Error: ${e.message}`);
+            console.error("Full AI Error:", e);
+            let userMsg = e.message;
+            if (e.message.includes("404")) {
+                const currentModelName = currentAiModel?.model || "unknown";
+                userMsg = `Model Not Found (404): The ID "${currentModelName}" is not available for your key or region. \n\nTip: Google rolls out Gemini 3.1 gradually. Try switching to "Gemini 2.0 Flash" or "Gemini 1.5 Flash" in the bottom menu.`;
+            }
+            appendMessageOnly('ai', userMsg);
         }
     } finally {
+        releaseWakeLock();
         currentAbortController = null;
         setProcessingState(false);
         chatInput.focus();
