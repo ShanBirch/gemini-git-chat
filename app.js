@@ -402,19 +402,23 @@ async function ghWriteFile(path, content, commit_message) {
 
 const toolsMap = { list_files: (args) => ghListFiles(args.path || ""), read_file: (args) => ghReadFile(args.path), write_file: (args) => ghWriteFile(args.path, args.content, args.commit_message) };
 
+function mapModelName(name) {
+    if (!name) return "gemini-3-flash-preview";
+    // Fix stale IDs from previous sessions
+    if (name === "gemini-3.1-pro" || name === "gemini-3.1-pro-exp") return "gemini-3.1-pro-preview";
+    if (name === "gemini-3.0-flash" || name === "gemini-3-flash") return "gemini-3-flash-preview";
+    if (name === "gemini-2.0-flash-exp") return "gemini-2.0-flash";
+    return name;
+}
+
 // --- AI Integration ---
 function setupAI() {
     const key = geminiKeyInput.value.trim();
     if (!key) return;
     const chat = chats.find(c => c.id === currentChatId);
-    let modelName = (chat && chat.model) || chatModelSelect.value || "gemini-1.5-flash-latest";
+    let rawModelName = (chat && chat.model) || chatModelSelect.value || "gemini-3-flash-preview";
+    const modelName = mapModelName(rawModelName);
     
-    // Ensure we don't use old/invalid names from history
-    const validModels = Array.from(chatModelSelect.options).map(o => o.value);
-    if (!validModels.includes(modelName)) {
-        modelName = "gemini-1.5-flash-latest";
-    }
-
     genAI = new GoogleGenerativeAI(key);
     currentAiModel = genAI.getGenerativeModel({ 
         model: modelName, 
@@ -425,7 +429,11 @@ function setupAI() {
                 { name: "write_file", description: "Update or create a file in the repository.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } }
             ]
         }],
-        systemInstruction: `You are GitChat AI, an expert autonomous software engineer with direct access to the user's GitHub repository. Use tools to read/write files and explain your actions.`
+        systemInstruction: `You are GitChat AI, an expert autonomous software engineer. 
+Your current model is ${modelName}. 
+You have direct access to the user's GitHub repository. 
+Use tools to read/write files and explain your actions. 
+If a tool fails, explain why and suggest an alternative.`
     });
 }
 
