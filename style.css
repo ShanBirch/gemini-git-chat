@@ -101,7 +101,7 @@ body {
 /* Settings */
 .settings-section { 
     background: var(--glass-bg); border: 1px solid var(--glass-border); 
-    border-radius: 16px; overflow: hidden; margin-top: auto; 
+    border-radius: 16px; margin-top: auto; 
 }
 .section-header { 
     display: flex; justify-content: space-between; align-items: center; 
@@ -110,7 +110,11 @@ body {
 .section-header:hover { background: rgba(255, 255, 255, 0.02); }
 .section-header h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
 
-.settings-content { display: none; flex-direction: column; gap: 16px; padding: 16px; border-top: 1px solid var(--border); }
+.settings-content { 
+    display: none; flex-direction: column; gap: 16px; padding: 16px; 
+    border-top: 1px solid var(--border);
+    max-height: 400px; overflow-y: auto;
+}
 .settings-content.active { display: flex; animation: slideDown 0.3s ease-out; }
 @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 
