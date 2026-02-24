@@ -567,7 +567,7 @@ async function ghWriteFile(path, content, commit_message) {
 const toolsMap = { list_files: (args) => ghListFiles(args.path || ""), read_file: (args) => ghReadFile(args.path), write_file: (args) => ghWriteFile(args.path, args.content, args.commit_message) };
 
 function mapModelName(name) {
-    if (!name) return "gemini-3-flash-preview";
+    if (!name) return "gemini-3-flash";
     let normalized = name.toLowerCase().trim();
     
     // Add 'gemini-' prefix if missing
@@ -575,11 +575,13 @@ function mapModelName(name) {
         normalized = "gemini-" + normalized;
     }
 
-    // Fix stale IDs and experimental suffixes
-    if (normalized.includes("3.1-pro")) return "gemini-3.1-pro-preview-customtools";
-    if (normalized.includes("3-pro")) return "gemini-3-pro-preview-customtools";
-    if (normalized.includes("3-flash") || normalized.includes("3.0-flash")) return "gemini-3-flash-preview";
-    if (normalized.includes("2.0-flash")) return "gemini-2.0-flash";
+    // Tier 2 / Production-ready mapping
+    if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
+    if (normalized.includes("3-pro") || normalized.includes("3.0-pro")) return "gemini-3-pro";
+    if (normalized.includes("3-flash") || normalized.includes("3.0-flash")) return "gemini-3-flash";
+    if (normalized.includes("2-flash") || normalized.includes("2.0-flash")) return "gemini-2.0-flash";
+    if (normalized.includes("2.5-pro")) return "gemini-2.5-pro";
+    if (normalized.includes("2.5-flash")) return "gemini-2.5-flash";
     
     return normalized;
 }
