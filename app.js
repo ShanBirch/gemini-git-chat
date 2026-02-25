@@ -416,7 +416,7 @@ async function generateAutoTitle(chat) {
 async function loadSettings() {
     // Fetch configuration from secure proxy
     try {
-        const user = netlifyIdentity.currentUser();
+        const user = window.netlifyIdentity.currentUser();
         if (!user) return;
 
         const token = await user.jwt();
