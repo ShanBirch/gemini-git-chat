@@ -24,7 +24,7 @@ const supabaseUrlInput = document.getElementById('supabase-url');
 const supabaseKeyInput = document.getElementById('supabase-key');
 const enableSyncBtn = document.getElementById('enable-sync');
 const deepseekKeyInput = document.getElementById('deepseek-key');
-const minimaxKeyInput = document.getElementById('minimax-key');
+const minimaxKeyInput = document = document.getElementById('minimax-key');
 
 // Mobile and Tabs
 const sidebar = document.getElementById('sidebar');
@@ -249,7 +249,10 @@ function loadChats() {
     else { currentChatId = chats[0].id; renderChatList(); renderCurrentChat(); }
 }
 
-function saveChats() { localStorage.setItem('gitchat_sessions', JSON.stringify(chats)); }
+function saveChats() {
+    localStorage.setItem('gitchat_sessions', JSON.stringify(chats));
+    if (syncEnabled) pushChatsToCloud(); // <-- Added this line
+}
 
 function createNewChat() {
     const newChat = { id: Date.now().toString(), title: "New Chat", messages: [], model: chatModelSelect.value, createdAt: new Date().toISOString() };
@@ -489,19 +492,6 @@ async function pullChatsFromCloud(silent = false) {
     }
 }
 
-async function pushSettingsToCloud() {
-    if (!supabase) return;
-    const settings = {
-        gemini_key: geminiKeyInput.value.trim(),
-        github_token: githubTokenInput.value.trim(),
-        github_repo: githubRepoSelect.value,
-        github_branch: githubBranchInput.value.trim(),
-        deepseek_key: deepseekKeyInput.value.trim(),
-        minimax_key: minimaxKeyInput.value.trim()
-    };
-    await supabase.from('settings').upsert({ id: 'user_settings', data: settings });
-}
-
 async function pushChatsToCloud() {
     if (!supabase) return;
     await supabase.from('app_state').upsert({ id: 'chat_sessions', data: chats });
@@ -690,9 +680,9 @@ function setupAI() {
         }],
         systemInstruction: `You are GitChat AI, an expert autonomous software engineer. 
 Your current model is ${modelName}. 
-You have direct access to the user's GitHub repository '${currentRepo}' on branch '${currentBranch}'. 
+You have direct access to the user\'s GitHub repository \'${currentRepo}\' on branch \'${currentBranch}\'. 
 Use tools to read/write files and explain your actions. 
-CRITICAL: When updating code, ensure you provide the FULL content of the file to 'write_file'. 
+CRITICAL: When updating code, ensure you provide the FULL content of the file to \'write_file\'. 
 If a tool fails, read the error message carefully and explain the exact GitHub error to the user.`
     });
 }
@@ -954,9 +944,9 @@ async function callOpenAICompatibleModel(provider, model, message, image, loadin
     const messages = [];
     // Add system instruction
     messages.push({ role: 'system', content: `You are GitChat AI, an expert autonomous software engineer. 
-You have direct access to the user's GitHub repository '${currentRepo}' on branch '${currentBranch}'. 
+You have direct access to the user\'s GitHub repository \'${currentRepo}\' on branch \'${currentBranch}\'. 
 Use tools to read/write files and explain your actions. 
-CRITICAL: When updating code, ensure you provide the FULL content of the file to 'write_file'.` });
+CRITICAL: When updating code, ensure you provide the FULL content of the file to \'write_file\'.` });
 
     // Add history
     chat.messages.forEach(m => {
