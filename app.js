@@ -321,7 +321,7 @@ function renderCurrentChat() {
     if (chat.model && validModels.includes(chat.model)) {
         chatModelSelect.value = chat.model;
     } else {
-        chatModelSelect.value = 'gemini-1.5-flash-latest';
+        chatModelSelect.value = 'gemini-3-flash-preview';
     }
 
     if (chat.messages.length === 0) {
