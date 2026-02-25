@@ -643,6 +643,7 @@ function mapModelName(name) {
         normalized = "gemini-" + normalized;
     }
     if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
+    if (normalized.includes("3.1-pro-preview")) return "gemini-3.1-pro-preview";
     if (normalized.includes("3-pro") || normalized.includes("3.0-pro")) return "gemini-3-pro";
     if (normalized.includes("3-flash") || normalized.includes("3.0-flash")) return "gemini-3-flash";
     if (normalized.includes("2-flash") || normalized.includes("2.0-flash")) return "gemini-2.0-flash";
@@ -668,8 +669,16 @@ function setupAI() {
     const modelName = mapModelName(rawModelName);
     
     genAI = new GoogleGenerativeAI(key);
+    const safetySettings = [
+        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+    ];
+
     currentAiModel = genAI.getGenerativeModel({ 
         model: modelName, 
+        safetySettings,
         tools: [{
             functionDeclarations: [
                 { name: "list_files", description: "List files in a directory of the standard connected GitHub repository.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } } } },
