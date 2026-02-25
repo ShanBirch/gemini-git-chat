@@ -1,17 +1,12 @@
 {
   "name": "GitChat AI",
   "short_name": "GitChat",
-  "start_url": ".",
+  "description": "Mobile-first autonomous AI coding agent for GitHub.",
+  "start_url": "/?pwa=1",
   "display": "standalone",
-  "background_color": "#0c0d12",
-  "theme_color": "#0c0d12",
-  "description": "GitChat AI coding assistant",
+  "background_color": "#0a0b10",
+  "theme_color": "#6366f1",
   "icons": [
-    {
-      "src": "icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml"
-    },
     {
       "src": "icon.svg",
       "sizes": "192x192",
