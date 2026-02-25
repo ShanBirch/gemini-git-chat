@@ -59,8 +59,8 @@ let currentChatId = null;
 let chatSessions = {};
 
 // Initialize
-function init() {
-    loadSettings();
+async function init() {
+    await loadSettings();
     loadChats();
     setupEventListeners();
     marked.setOptions({ breaks: true, gfm: true });
@@ -134,6 +134,18 @@ function setupEventListeners() {
     });
 
     enableSyncBtn.addEventListener('click', initSupabase);
+    
+    document.getElementById('copy-sync-link')?.addEventListener('click', () => {
+        const url = new URL(window.location.href);
+        const sUrl = supabaseUrlInput.value.trim();
+        const sKey = supabaseKeyInput.value.trim();
+        if(!sUrl || !sKey) { alert("Enable Cloud Sync first!"); return; }
+        
+        url.searchParams.set('s', btoa(sUrl));
+        url.searchParams.set('k', btoa(sKey));
+        navigator.clipboard.writeText(url.toString());
+        alert("Sync Link copied! Bookmark this URL to never re-enter keys again. 🔗");
+    });
     
     document.getElementById('verify-models-link')?.addEventListener('click', async (e) => {
         e.preventDefault();
@@ -377,7 +389,20 @@ async function generateAutoTitle(chat) {
 }
 
 // Settings Management
-function loadSettings() {
+async function loadSettings() {
+    // 1. Check URL for sync params
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('s') && params.has('k')) {
+        supabaseUrlInput.value = atob(params.get('s'));
+        supabaseKeyInput.value = atob(params.get('k'));
+        await initSupabase(true); // silent init
+    } else {
+        // 2. Load from localStorage
+        supabaseUrlInput.value = localStorage.getItem('gitchat_supabase_url') || '';
+        supabaseKeyInput.value = localStorage.getItem('gitchat_supabase_key') || '';
+        if (supabaseUrlInput.value && supabaseKeyInput.value) await initSupabase(true);
+    }
+
     geminiKeyInput.value = localStorage.getItem('gitchat_gemini_key') || '';
     githubTokenInput.value = localStorage.getItem('gitchat_github_token') || '';
     const savedRepo = localStorage.getItem('gitchat_github_repo') || '';
@@ -402,10 +427,10 @@ function saveSettings() {
     if (syncEnabled) pushSettingsToCloud();
 }
 
-async function initSupabase() {
+async function initSupabase(silent = false) {
     const url = supabaseUrlInput.value.trim();
     const key = supabaseKeyInput.value.trim();
-    if (!url || !key) { alert("Please enter both Supabase URL and Key"); return; }
+    if (!url || !key) { if(!silent) alert("Please enter both Supabase URL and Key"); return; }
 
     try {
         supabase = createClient(url, key);
@@ -414,10 +439,43 @@ async function initSupabase() {
         localStorage.setItem('gitchat_supabase_key', key);
         enableSyncBtn.textContent = "Cloud Sync Active 🟢";
         enableSyncBtn.style.color = "var(--success)";
-        pushSettingsToCloud();
-        pushChatsToCloud();
+        
+        // Check for existing settings in cloud
+        const { data, error } = await supabase.from('settings').select('data').eq('id', 'user_settings').single();
+        if (data && data.data) {
+            const cloud = data.data;
+            // Only pull if local is empty OR if this is a fresh sync init
+            if (!geminiKeyInput.value || !githubTokenInput.value || !silent) {
+                geminiKeyInput.value = cloud.gemini_key || geminiKeyInput.value;
+                githubTokenInput.value = cloud.github_token || githubTokenInput.value;
+                githubBranchInput.value = cloud.github_branch || githubBranchInput.value;
+                localStorage.setItem('gitchat_gemini_key', geminiKeyInput.value);
+                localStorage.setItem('gitchat_github_token', githubTokenInput.value);
+                localStorage.setItem('gitchat_github_branch', githubBranchInput.value);
+                if (cloud.github_repo) localStorage.setItem('gitchat_github_repo', cloud.github_repo);
+                setupAI();
+                if(!silent) alert("Settings restored from Cloud! ☁️✨");
+            }
+        } else {
+            // First time? Push local to cloud
+            pushSettingsToCloud();
+        }
+        
+        pullChatsFromCloud(silent);
     } catch (e) {
-        alert("Supabase connection failed: " + e.message);
+        if(!silent) alert("Supabase connection failed: " + e.message);
+    }
+}
+
+async function pullChatsFromCloud(silent = false) {
+    if (!supabase) return;
+    const { data, error } = await supabase.from('app_state').select('data').eq('id', 'chat_sessions').single();
+    if (data && data.data) {
+        chats = data.data;
+        saveChats();
+        renderChatList();
+        renderCurrentChat();
+        if(!silent) alert("Chats restored from Cloud! ☁️");
     }
 }
 
