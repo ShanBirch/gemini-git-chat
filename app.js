@@ -1,5 +1,5 @@
-import { GoogleGenerativeAI } from "https://esm.run/@google/generative-ai";
-import { createClient } from "https://esm.run/@supabase/supabase-js";
+import { GoogleGenerativeAI } from "https://cdn.jsdelivr.net/npm/@google/generative-ai/+esm";
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
 
 // DOM Elements
 const chatHistory = document.getElementById('chat-history');
