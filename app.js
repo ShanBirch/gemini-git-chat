@@ -34,6 +34,9 @@ const sidebarOverlay = document.getElementById('sidebar-overlay');
 const chatListEl = document.getElementById('chat-list');
 const newChatBtn = document.getElementById('new-chat-btn');
 const mobileChatTitle = document.getElementById('current-chat-title-mobile');
+const authBtn = document.getElementById('auth-btn');
+const userInfo = document.getElementById('user-info');
+const userEmailText = document.getElementById('user-email');
 
 // App State
 let genAI = null;
@@ -65,6 +68,7 @@ async function init() {
     await loadSettings();
     loadChats();
     setupEventListeners();
+    initAuth();
     marked.setOptions({ breaks: true, gfm: true });
     startBuildStatusPolling();
 }
@@ -147,6 +151,14 @@ function setupEventListeners() {
         url.searchParams.set('k', btoa(sKey));
         navigator.clipboard.writeText(url.toString());
         alert("Sync Link copied! Bookmark this URL to never re-enter keys again. 🔗");
+    });
+
+    authBtn.addEventListener('click', () => {
+        if (netlifyIdentity.currentUser()) {
+            netlifyIdentity.logout();
+        } else {
+            netlifyIdentity.open();
+        }
     });
     
     document.getElementById('verify-models-link')?.addEventListener('click', async (e) => {
@@ -1027,3 +1039,29 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+function initAuth() {
+    const user = window.netlifyIdentity.currentUser();
+    updateAuthUI(user);
+
+    window.netlifyIdentity.on('login', user => {
+        window.netlifyIdentity.close();
+        updateAuthUI(user);
+    });
+
+    window.netlifyIdentity.on('logout', () => {
+        updateAuthUI(null);
+    });
+}
+
+function updateAuthUI(user) {
+    if (user) {
+        authBtn.textContent = 'Logout';
+        userInfo.style.display = 'flex';
+        userEmailText.textContent = user.email;
+    } else {
+        authBtn.textContent = 'Login';
+        userInfo.style.display = 'none';
+        // window.netlifyIdentity.open(); // Optional: Automatically open login if not authenticated
+    }
+}

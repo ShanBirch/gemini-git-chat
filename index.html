@@ -21,6 +21,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
     
     <link rel="stylesheet" href="style.css">
+    <!-- Netlify Identity Widget -->
+    <script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
 </head>
 <body>
     <div id="pull-to-refresh" class="pull-to-refresh">
@@ -115,6 +117,15 @@
                         <button id="enable-sync" class="btn primary full-width" style="background:rgba(16, 185, 129, 0.1); color:var(--success); border:1px solid rgba(16, 185, 129, 0.2);">Enable Cloud Sync</button>
                         <button id="copy-sync-link" class="btn full-width" style="margin-top:8px; font-size: 0.75rem; background: rgba(255,255,255,0.05);">Copy Permalink to Settings 🔗</button>
                     </div>
+                </div>
+
+                <!-- User Profile / Auth Section -->
+                <div class="user-auth-section" style="margin-top: 16px; padding: 16px; background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px solid var(--border);">
+                    <div id="user-info" style="display: none; align-items: center; gap: 12px; margin-bottom: 12px;">
+                        <div class="user-avatar" style="width: 32px; height: 32px; background: var(--accent); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;">U</div>
+                        <span id="user-email" style="font-size: 0.85rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis;">user@example.com</span>
+                    </div>
+                    <button id="auth-btn" class="btn full-width">Login</button>
                 </div>
             </div>
         </aside>
