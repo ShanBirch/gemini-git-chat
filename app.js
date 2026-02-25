@@ -426,6 +426,8 @@ async function loadSettings() {
         
         if (res.ok) {
             const config = await res.json();
+            console.log("Config loaded successfully:", Object.keys(config).filter(k => !!config[k]));
+            
             geminiKeyInput.value = config.GEMINI_API_KEY || '';
             githubTokenInput.value = config.GITHUB_TOKEN || '';
             supabaseUrlInput.value = config.SUPABASE_URL || '';
@@ -437,6 +439,8 @@ async function loadSettings() {
                 testGitHubConnection();
             }
             if (supabaseUrlInput.value && supabaseKeyInput.value) await initSupabase(true);
+        } else {
+            console.error("Failed to fetch secure config. Status:", res.status);
         }
     } catch (e) {
         console.error("Failed to load secure config:", e);
@@ -539,13 +543,12 @@ async function fetchUserRepos(selectedRepo = "") {
     }
 
     try {
-        const headers = { "Accept": "application/vnd.github.v3+json", "Authorization": `token ${token}` };
+        const headers = { "Accept": "application/vnd.github.v3+json", "Authorization": `Bearer ${token}` };
         const res = await fetch(`https://api.github.com/user/repos?sort=updated&per_page=100`, { headers });
         if (res.ok) {
             const repos = await res.json();
             githubRepoSelect.innerHTML = '';
             
-            // Add current selected repo if it's not in the top 100 updated
             if (selectedRepo && !repos.find(r => r.full_name === selectedRepo)) {
                 const opt = document.createElement('option');
                 opt.value = selectedRepo;
@@ -562,7 +565,10 @@ async function fetchUserRepos(selectedRepo = "") {
             
             if (selectedRepo) githubRepoSelect.value = selectedRepo;
         } else {
-            githubRepoSelect.innerHTML = '<option value="">Error fetching repos</option>';
+            const errData = await res.json().catch(() => ({}));
+            const msg = errData.message || `Status ${res.status}`;
+            console.error("GitHub API Error:", msg);
+            githubRepoSelect.innerHTML = `<option value="">GitHub Err: ${msg}</option>`;
         }
     } catch (e) {
         githubRepoSelect.innerHTML = '<option value="">Connection failed</option>';
