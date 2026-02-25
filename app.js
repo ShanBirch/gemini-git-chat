@@ -407,29 +407,32 @@ async function generateAutoTitle(chat) {
 
 // Settings Management
 async function loadSettings() {
-    // Hardcoded credentials as requested
-    const HARDCODED_GEMINI_KEY = "AIzaSyDgIj_TPH94_laEJqkoU9xPf2OvV8n7LHI";
-    const HARDCODED_GITHUB_TOKEN = "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";
-    const HARDCODED_SUPABASE_URL = "https://hzapaorxqboevxnumxkv.supabase.co";
-    const HARDCODED_SUPABASE_KEY = "sb_publishable_BpbovSn4cSo8c7bDwy81VA_xvhqxeWP";
+    // Fetch configuration from secure proxy
+    try {
+        const user = netlifyIdentity.currentUser();
+        if (!user) return;
 
-    geminiKeyInput.value = HARDCODED_GEMINI_KEY;
-    githubTokenInput.value = HARDCODED_GITHUB_TOKEN;
-    supabaseUrlInput.value = HARDCODED_SUPABASE_URL;
-    supabaseKeyInput.value = HARDCODED_SUPABASE_KEY;
-
-    // Set defaults for others
-    githubBranchInput.value = localStorage.getItem('gitchat_github_branch') || 'main';
-    const savedRepo = localStorage.getItem('gitchat_github_repo') || '';
-
-    // Initialize systems
-    if (geminiKeyInput.value) setupAI();
-    if (githubTokenInput.value) {
-        fetchUserRepos(savedRepo);
-        testGitHubConnection();
-    }
-    if (supabaseUrlInput.value && supabaseKeyInput.value) {
-        await initSupabase(true);
+        const token = await user.jwt();
+        const res = await fetch('/.netlify/functions/get-config', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (res.ok) {
+            const config = await res.json();
+            geminiKeyInput.value = config.GEMINI_API_KEY || '';
+            githubTokenInput.value = config.GITHUB_TOKEN || '';
+            supabaseUrlInput.value = config.SUPABASE_URL || '';
+            supabaseKeyInput.value = config.SUPABASE_KEY || '';
+            
+            if (geminiKeyInput.value) setupAI();
+            if (githubTokenInput.value) {
+                fetchUserRepos(localStorage.getItem('gitchat_github_repo') || '');
+                testGitHubConnection();
+            }
+            if (supabaseUrlInput.value && supabaseKeyInput.value) await initSupabase(true);
+        }
+    } catch (e) {
+        console.error("Failed to load secure config:", e);
     }
 }
 
