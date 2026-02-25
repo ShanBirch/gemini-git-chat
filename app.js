@@ -23,6 +23,8 @@ const removeImageBtn = document.getElementById('remove-image-btn');
 const supabaseUrlInput = document.getElementById('supabase-url');
 const supabaseKeyInput = document.getElementById('supabase-key');
 const enableSyncBtn = document.getElementById('enable-sync');
+const deepseekKeyInput = document.getElementById('deepseek-key');
+const minimaxKeyInput = document.getElementById('minimax-key');
 
 // Mobile and Tabs
 const sidebar = document.getElementById('sidebar');
@@ -405,6 +407,8 @@ async function loadSettings() {
 
     geminiKeyInput.value = localStorage.getItem('gitchat_gemini_key') || '';
     githubTokenInput.value = localStorage.getItem('gitchat_github_token') || '';
+    deepseekKeyInput.value = localStorage.getItem('gitchat_deepseek_key') || '';
+    minimaxKeyInput.value = localStorage.getItem('gitchat_minimax_key') || '';
     const savedRepo = localStorage.getItem('gitchat_github_repo') || '';
     githubBranchInput.value = localStorage.getItem('gitchat_github_branch') || 'main';
     
@@ -420,6 +424,8 @@ function saveSettings() {
     localStorage.setItem('gitchat_github_token', githubTokenInput.value.trim());
     localStorage.setItem('gitchat_github_repo', githubRepoSelect.value);
     localStorage.setItem('gitchat_github_branch', githubBranchInput.value.trim());
+    localStorage.setItem('gitchat_deepseek_key', deepseekKeyInput.value.trim());
+    localStorage.setItem('gitchat_minimax_key', minimaxKeyInput.value.trim());
     settingsContent.classList.remove('active');
     setupAI();
     fetchUserRepos(githubRepoSelect.value);
@@ -449,9 +455,13 @@ async function initSupabase(silent = false) {
                 geminiKeyInput.value = cloud.gemini_key || geminiKeyInput.value;
                 githubTokenInput.value = cloud.github_token || githubTokenInput.value;
                 githubBranchInput.value = cloud.github_branch || githubBranchInput.value;
+                deepseekKeyInput.value = cloud.deepseek_key || deepseekKeyInput.value;
+                minimaxKeyInput.value = cloud.minimax_key || minimaxKeyInput.value;
                 localStorage.setItem('gitchat_gemini_key', geminiKeyInput.value);
                 localStorage.setItem('gitchat_github_token', githubTokenInput.value);
                 localStorage.setItem('gitchat_github_branch', githubBranchInput.value);
+                localStorage.setItem('gitchat_deepseek_key', deepseekKeyInput.value);
+                localStorage.setItem('gitchat_minimax_key', minimaxKeyInput.value);
                 if (cloud.github_repo) localStorage.setItem('gitchat_github_repo', cloud.github_repo);
                 setupAI();
                 if(!silent) alert("Settings restored from Cloud! ☁️✨");
@@ -485,7 +495,9 @@ async function pushSettingsToCloud() {
         gemini_key: geminiKeyInput.value.trim(),
         github_token: githubTokenInput.value.trim(),
         github_repo: githubRepoSelect.value,
-        github_branch: githubBranchInput.value.trim()
+        github_branch: githubBranchInput.value.trim(),
+        deepseek_key: deepseekKeyInput.value.trim(),
+        minimax_key: minimaxKeyInput.value.trim()
     };
     await supabase.from('settings').upsert({ id: 'user_settings', data: settings });
 }
@@ -627,21 +639,24 @@ const toolsMap = { list_files: (args) => ghListFiles(args.path || ""), read_file
 function mapModelName(name) {
     if (!name) return "gemini-3-flash";
     let normalized = name.toLowerCase().trim();
-    
-    // Add 'gemini-' prefix if missing
-    if (!normalized.startsWith("gemini-")) {
+    if (!normalized.startsWith("gemini-") && !normalized.includes("deepseek") && !normalized.includes("minimax")) {
         normalized = "gemini-" + normalized;
     }
-
-    // Tier 2 / Production-ready mapping
     if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
     if (normalized.includes("3-pro") || normalized.includes("3.0-pro")) return "gemini-3-pro";
     if (normalized.includes("3-flash") || normalized.includes("3.0-flash")) return "gemini-3-flash";
     if (normalized.includes("2-flash") || normalized.includes("2.0-flash")) return "gemini-2.0-flash";
     if (normalized.includes("2.5-pro")) return "gemini-2.5-pro";
     if (normalized.includes("2.5-flash")) return "gemini-2.5-flash";
-    
+    if (normalized.includes("deepseek")) return "deepseek-v3.2";
+    if (normalized.includes("minimax")) return "minimax-m2.5";
     return normalized;
+}
+
+function getProvider(model) {
+    if (model.includes("deepseek")) return "deepseek";
+    if (model.includes("minimax")) return "minimax";
+    return "google";
 }
 
 // --- AI Integration ---
@@ -789,13 +804,23 @@ async function handleSend() {
     chatInput.value = '';
     chatInput.style.height = 'auto';
 
-    const session = getChatSession();
-    currentAbortController = new AbortController();
-
     const loadingDiv = document.createElement('div');
     loadingDiv.className = `message ai thinking-msg`;
     loadingDiv.innerHTML = `<div class="message-content" style="opacity: 0.8; font-style: italic;">GitChat AI is thinking...</div>`;
     chatHistory.appendChild(loadingDiv);
+
+    const chat = chats.find(c => c.id === currentChatId);
+    if (!chat) { loadingDiv.remove(); return; }
+    const model = mapModelName(chat.model || chatModelSelect.value);
+    const provider = getProvider(model);
+
+    if (provider !== 'google') {
+        await callOpenAICompatibleModel(provider, model, messageToSend, imageDataToSend, loadingDiv);
+        return;
+    }
+
+    const session = getChatSession();
+    currentAbortController = new AbortController();
 
     try {
         const parts = [{ text: messageToSend }];
@@ -821,7 +846,6 @@ async function handleSend() {
             
             loadingDiv.remove();
             let aiMsgNode = chatHistory.lastElementChild;
-            // Append or update ai message node
             if (!aiMsgNode || !aiMsgNode.classList.contains('ai') || aiMsgNode.innerHTML.includes('Thinking')) {
                  aiMsgNode = appendMessageOnly('ai', fullResponseText || "Analyzing repository...");
             }
@@ -905,6 +929,87 @@ async function updateBuildStatus() {
             }
         }
     } catch (e) { console.log("Build status check failed"); }
+}
+
+async function callOpenAICompatibleModel(provider, model, message, image, loading) {
+    const key = provider === 'deepseek' ? deepseekKeyInput.value.trim() : minimaxKeyInput.value.trim();
+    const endpoint = provider === 'deepseek' ? "https://api.deepseek.com/v1/chat/completions" : "https://api.minimax.chat/v1/text/chatcompletion_v2";
+    
+    if (!key) { alert(`Please enter your ${provider} key in settings.`); loading.remove(); setProcessingState(false); return; }
+
+    currentAbortController = new AbortController();
+    const chat = chats.find(c => c.id === currentChatId);
+    
+    const messages = [];
+    // Add system instruction
+    messages.push({ role: 'system', content: `You are GitChat AI, an expert autonomous software engineer. 
+You have direct access to the user's GitHub repository '${currentRepo}' on branch '${currentBranch}'. 
+Use tools to read/write files and explain your actions. 
+CRITICAL: When updating code, ensure you provide the FULL content of the file to 'write_file'.` });
+
+    // Add history
+    chat.messages.forEach(m => {
+        messages.push({
+            role: m.role === 'ai' ? 'assistant' : 'user',
+            content: m.content
+        });
+    });
+    
+    // Add current message
+    messages.push({ role: 'user', content: message });
+    
+    const tools = [
+        { type: "function", function: { name: "list_files", description: "List files in a directory", parameters: { type: "object", properties: { path: { type: "string" } } } } },
+        { type: "function", function: { name: "read_file", description: "Read file content", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
+        { type: "function", function: { name: "write_file", description: "Write file content", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
+    ];
+
+    try {
+        while(true) {
+            if (currentAbortController.signal.aborted) break;
+            
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+                body: JSON.stringify({ model, messages, tools, tool_choice: "auto" }),
+                signal: currentAbortController.signal
+            });
+
+            if (!res.ok) throw new Error(`${provider} Error ${res.status}`);
+            const data = await res.json();
+            const choice = data.choices[0];
+            const aiMsg = choice.message;
+            messages.push(aiMsg);
+
+            if (aiMsg.content) {
+                loading.remove();
+                appendMessageOnly('ai', aiMsg.content);
+                addMessageToCurrent('ai', aiMsg.content);
+            }
+
+            if (!aiMsg.tool_calls || aiMsg.tool_calls.length === 0) break;
+
+            loading.remove();
+            let aiMsgNode = chatHistory.lastElementChild;
+            if (!aiMsgNode || !aiMsgNode.classList.contains('ai')) aiMsgNode = appendMessageOnly('ai', "(Analyzing repository...)");
+
+            for (const call of aiMsg.tool_calls) {
+                const toolDiv = appendToolCall(aiMsgNode, call.function.name, JSON.parse(call.function.arguments));
+                const output = toolsMap[call.function.name] ? await toolsMap[call.function.name](JSON.parse(call.function.arguments)) : "Error";
+                markToolSuccess(toolDiv);
+                messages.push({ role: 'tool', tool_call_id: call.id, content: output });
+            }
+            
+            chatHistory.appendChild(loading);
+        }
+    } catch (e) {
+        loading.remove();
+        appendMessageOnly('ai', `Error: ${e.message}`);
+    } finally {
+        loading.remove();
+        setProcessingState(false);
+        releaseWakeLock();
+    }
 }
 
 document.addEventListener('DOMContentLoaded', init);
