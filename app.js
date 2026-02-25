@@ -65,6 +65,10 @@ let chatSessions = {};
 
 // Initialize
 async function init() {
+    // Safety Reset: Force page back to top transform on load
+    document.getElementById('pull-to-refresh').style.transform = 'translateY(0)';
+    document.getElementById('app').style.transform = 'translateY(0)';
+    
     await loadSettings();
     loadChats();
     setupEventListeners();
@@ -224,7 +228,10 @@ function setupEventListeners() {
     window.addEventListener('touchend', () => {
         if (pullDistance >= PULL_THRESHOLD) {
             pullToRefreshEl.querySelector('span').textContent = "Refreshing...";
-            window.location.reload();
+            // Reset transforms immediately BEFORE reload to avoid sticky state
+            pullToRefreshEl.style.transform = `translateY(0)`;
+            appEl.style.transform = `translateY(0)`;
+            setTimeout(() => window.location.reload(), 100);
         } else {
             pullToRefreshEl.style.transform = `translateY(0)`;
             appEl.style.transform = `translateY(0)`;
