@@ -407,30 +407,29 @@ async function generateAutoTitle(chat) {
 
 // Settings Management
 async function loadSettings() {
-    // 1. Check URL for sync params
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('s') && params.has('k')) {
-        supabaseUrlInput.value = atob(params.get('s'));
-        supabaseKeyInput.value = atob(params.get('k'));
-        await initSupabase(true); // silent init
-    } else {
-        // 2. Load from localStorage
-        supabaseUrlInput.value = localStorage.getItem('gitchat_supabase_url') || '';
-        supabaseKeyInput.value = localStorage.getItem('gitchat_supabase_key') || '';
-        if (supabaseUrlInput.value && supabaseKeyInput.value) await initSupabase(true);
-    }
+    // Hardcoded credentials as requested
+    const HARDCODED_GEMINI_KEY = "AIzaSyDgIj_TPH94_laEJqkoU9xPf2OvV8n7LHI";
+    const HARDCODED_GITHUB_TOKEN = "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";
+    const HARDCODED_SUPABASE_URL = "https://hzapaorxqboevxnumxkv.supabase.co";
+    const HARDCODED_SUPABASE_KEY = "sb_publishable_BpbovSn4cSo8c7bDwy81VA_xvhqxeWP";
 
-    geminiKeyInput.value = localStorage.getItem('gitchat_gemini_key') || '';
-    githubTokenInput.value = localStorage.getItem('gitchat_github_token') || '';
-    deepseekKeyInput.value = localStorage.getItem('gitchat_deepseek_key') || '';
-    minimaxKeyInput.value = localStorage.getItem('gitchat_minimax_key') || '';
-    const savedRepo = localStorage.getItem('gitchat_github_repo') || '';
+    geminiKeyInput.value = HARDCODED_GEMINI_KEY;
+    githubTokenInput.value = HARDCODED_GITHUB_TOKEN;
+    supabaseUrlInput.value = HARDCODED_SUPABASE_URL;
+    supabaseKeyInput.value = HARDCODED_SUPABASE_KEY;
+
+    // Set defaults for others
     githubBranchInput.value = localStorage.getItem('gitchat_github_branch') || 'main';
-    
+    const savedRepo = localStorage.getItem('gitchat_github_repo') || '';
+
+    // Initialize systems
     if (geminiKeyInput.value) setupAI();
     if (githubTokenInput.value) {
         fetchUserRepos(savedRepo);
         testGitHubConnection();
+    }
+    if (supabaseUrlInput.value && supabaseKeyInput.value) {
+        await initSupabase(true);
     }
 }
 
@@ -1059,9 +1058,10 @@ function updateAuthUI(user) {
         authBtn.textContent = 'Logout';
         userInfo.style.display = 'flex';
         userEmailText.textContent = user.email;
+        // Reinforce settings on login
+        loadSettings();
     } else {
         authBtn.textContent = 'Login';
         userInfo.style.display = 'none';
-        // window.netlifyIdentity.open(); // Optional: Automatically open login if not authenticated
     }
 }
