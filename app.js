@@ -24,7 +24,7 @@ const supabaseUrlInput = document.getElementById('supabase-url');
 const supabaseKeyInput = document.getElementById('supabase-key');
 const enableSyncBtn = document.getElementById('enable-sync');
 const deepseekKeyInput = document.getElementById('deepseek-key');
-const minimaxKeyInput = document = document.getElementById('minimax-key');
+const minimaxKeyInput = document.getElementById('minimax-key');
 
 // Mobile and Tabs
 const sidebar = document.getElementById('sidebar');
@@ -490,6 +490,19 @@ async function pullChatsFromCloud(silent = false) {
         renderCurrentChat();
         if(!silent) alert("Chats restored from Cloud! ☁️");
     }
+}
+
+async function pushSettingsToCloud() {
+    if (!supabase) return;
+    const settings = {
+        gemini_key: geminiKeyInput.value.trim(),
+        github_token: githubTokenInput.value.trim(),
+        github_repo: githubRepoSelect.value,
+        github_branch: githubBranchInput.value.trim(),
+        deepseek_key: deepseekKeyInput.value.trim(),
+        minimax_key: minimaxKeyInput.value.trim()
+    };
+    await supabase.from('settings').upsert({ id: 'user_settings', data: settings });
 }
 
 async function pushChatsToCloud() {
