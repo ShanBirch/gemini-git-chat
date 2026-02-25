@@ -158,7 +158,25 @@ body {
 .message-content {
     padding: 16px 20px; line-height: 1.6; font-size: 0.95rem; border-radius: 12px;
     max-width: 85%; position: relative;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    word-break: break-word;
 }
+.message-content img { max-width: 100%; border-radius: 8px; margin: 8px 0; }
+.message-content pre { 
+    background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; 
+    overflow-x: auto; margin: 12px 0; border: 1px solid var(--border);
+    font-family: var(--font-mono); font-size: 0.85rem;
+}
+.message-content code { 
+    font-family: var(--font-mono); background: rgba(255,255,255,0.05); 
+    padding: 2px 5px; border-radius: 4px; font-size: 0.9em;
+}
+.message-content pre code { background: transparent; padding: 0; }
+.message-content p { margin-bottom: 12px; }
+.message-content p:last-child { margin-bottom: 0; }
+.message-content ul, .message-content ol { margin: 10px 0 10px 20px; }
+.message-content li { margin-bottom: 5px; }
 .message.user .message-content {
     background: var(--accent); color: #fff; border-bottom-right-radius: 4px;
 }
