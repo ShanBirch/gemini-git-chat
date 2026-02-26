@@ -782,6 +782,36 @@ async function sbSemanticSearch(query) {
     } catch (e) { return `Search error: ${e.message}`; }
 }
 
+// --- Personal Memory (Supabase) ---
+async function sbRememberFact(fact, category = "general") {
+    if (!supabase) return "Supabase not connected.";
+    try {
+        const embedding = await getEmbedding(fact);
+        const { error } = await supabase.from('user_memories').insert({
+            content: fact,
+            embedding: embedding,
+            category: category
+        });
+        if (error) throw error;
+        return "Memory saved successfully.";
+    } catch (e) { return `Memory error: ${e.message}`; }
+}
+
+async function sbRecallMemories(query) {
+    if (!supabase) return "Supabase not connected.";
+    try {
+        const queryEmbedding = await getEmbedding(query);
+        const { data, error } = await supabase.rpc('match_memories', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.4,
+            match_count: 3
+        });
+        if (error) throw error;
+        if (!data || data.length === 0) return "No relevant personal memories found.";
+        return data.map(m => `💡 Memory: ${m.content}`).join('\n');
+    } catch (e) { return `Memory recall error: ${e.message}`; }
+}
+
 async function ghWriteFile(path, content, commit_message) {
     try {
         let sha = undefined;
@@ -840,7 +870,9 @@ const toolsMap = {
     get_repo_map: () => ghGetRepoMap(),
     search_code: (args) => ghSearchCode(args.query),
     get_build_status: () => ghGetBuildStatus(),
-    semantic_search: (args) => sbSemanticSearch(args.query)
+    semantic_search: (args) => sbSemanticSearch(args.query),
+    remember_this: (args) => sbRememberFact(args.fact, args.category),
+    recall_memories: (args) => sbRecallMemories(args.query)
 };
 
 function mapModelName(name) {
@@ -899,7 +931,9 @@ CRITICAL: You are currently in PLANNING MODE.
 
     const executionInstruction = `${baseInstruction}
 - GOAL: Operate with high precision and speed.
-- PATCHING: Prefer 'patch_file' over 'write_file' for existing files—it is 10x faster and safer.
+- VISION MODE: If an image is provided, you are a Vision-to-Code Expert. Analyze pixels (padding, colors, layout) and map them to CSS selectors or HTML structure. Use 'semantic_search' to find the relevant style files.
+- MEMORY: Use 'recall_memories' at the start of complex tasks to remember user preferences. Use 'remember_this' if the user gives important project rules.
+- PATCHING: Prefer 'patch_file' over 'write_file' for existing files.
 - BUILD LOOP: If you push code, check 'get_build_status'. If it fails, fix it.
 - SEMANTIC SEARCH: Use 'semantic_search' to find logic across the repo by intent.
 - EXPLORATION: Use 'get_repo_map' for context.
@@ -916,7 +950,9 @@ CRITICAL: You are currently in PLANNING MODE.
                 { name: "read_file", description: "Read a file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
                 { name: "write_file", description: "Full file overwrite.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
                 { name: "get_build_status", description: "Check CI/Build logs." },
-                { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index. Use this when you are not sure where a specific feature is implemented.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } }
+                { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index. Use this when you are not sure where a specific feature is implemented.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
+                { name: "remember_this", description: "Save a fact about the user, their tech preferences, or project rules for long-term memory.", parameters: { type: "OBJECT", properties: { fact: { type: "STRING" }, category: { type: "STRING" } }, required: ["fact"] } },
+                { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } }
             ]
         }],
         systemInstruction: isPlanning ? planningInstruction : executionInstruction
@@ -1187,6 +1223,8 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
         { type: "function", function: { name: "patch_file", description: "Surgical block-replacement.", parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "search", "replace"] } } },
         { type: "function", function: { name: "get_build_status", description: "Check CI/Build logs." } },
         { type: "function", function: { name: "semantic_search", description: "Find code by meaning using Supabase.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
+        { type: "function", function: { name: "remember_this", description: "Save user preferences.", parameters: { type: "object", properties: { fact: { type: "string" }, category: { type: "string" } }, required: ["fact"] } } },
+        { type: "function", function: { name: "recall_memories", description: "Recall user history.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "search_code", description: "Search for specific code strings across the repo.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "read_file", description: "Read file content", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
         { type: "function", function: { name: "write_file", description: "Full file overwrite.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
