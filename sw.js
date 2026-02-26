@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gitchat-v2';
+const CACHE_NAME = 'gitchat-v3-neural';
 const ASSETS = [
     '/',
     '/index.html',
