@@ -688,7 +688,7 @@ async function ghViewFile(path, startLine, endLine) {
     const totalLines = lines.length;
     
     if (startLine === undefined || startLine === null) startLine = 1;
-    if (endLine === undefined || endLine === null) endLine = Math.min(startLine + 500, totalLines);
+    if (endLine === undefined || endLine === null) endLine = Math.min(startLine + 200, totalLines);
     
     startLine = Math.max(1, startLine);
     endLine = Math.min(totalLines, endLine);
@@ -762,19 +762,24 @@ async function ghSearchCode(query) {
 
 async function ghPatchFile(path, search, replace, commit_message) {
     try {
-        const original = await ghReadFile(path);
-        if (original.startsWith("Error:")) return original;
+        // Use cached content if available — avoid unnecessary re-download
+        let original = fileCache.get(path);
+        if (!original) {
+            original = await ghReadFile(path);
+            if (original.startsWith("Error:")) return original;
+        }
         
         const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const matches = original.match(new RegExp(escapeRegExp(search), 'g')) || [];
         if (matches.length === 0) {
-            return `Error: Did not find the exact 'search' text in ${path}. Please ensure whitespace/indentation are identical to what you read.`;
+            return `Error: Did not find the exact 'search' text in ${path}. Ensure whitespace/indentation exactly matches what you read via view_file. Tip: Use grep_search to find the exact line, then view_file around it.`;
         }
         if (matches.length > 1) {
-            return `Error: The search block was found ${matches.length} times in ${path}. Please provide a longer, more unique snippet of code to ensure the correct block is replaced.`;
+            return `Error: Found ${matches.length} occurrences. Provide a longer, more unique search block (e.g., include 2-3 surrounding lines).`;
         }
         
         const updated = original.replace(search, replace);
+        // ghWriteFile now updates cache itself — no need to bust it
         return await ghWriteFile(path, updated, commit_message || `Patch ${path}`);
     } catch (e) { return `Error patching: ${e.message}`; }
 }
@@ -944,11 +949,12 @@ async function ghWriteFile(path, content, commit_message) {
             sha = getData.sha;
         }
 
-        // 2. Prepare content - Robust Base64 for UTF-8
+        // 2. Prepare content - Fast chunked Base64 for UTF-8 (avoids slow char loop)
         const bytes = new TextEncoder().encode(content);
+        const CHUNK = 8192;
         let binaryString = "";
-        for (let i = 0; i < bytes.byteLength; i++) {
-            binaryString += String.fromCharCode(bytes[i]);
+        for (let i = 0; i < bytes.byteLength; i += CHUNK) {
+            binaryString += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
         }
         const base64Content = btoa(binaryString);
 
@@ -968,9 +974,11 @@ async function ghWriteFile(path, content, commit_message) {
 
         if (!putRes.ok) {
             const errData = await putRes.json();
-            throw new Error(`GitHub Error ${putRes.status}: ${errData.message || res.statusText}`);
+            throw new Error(`GitHub Error ${putRes.status}: ${errData.message || errData.statusText}`);
         }
 
+        // Update cache to avoid re-download on next read
+        fileCache.set(path, content);
         return `Successfully wrote to ${path}! Changes pushed to branch '${currentBranch}'.`;
     } catch (e) { 
         console.error("Write File Error:", e);
@@ -978,19 +986,60 @@ async function ghWriteFile(path, content, commit_message) {
     }
 }
 
+async function ghLineCount(path) {
+    let content = fileCache.get(path);
+    if (!content) {
+        content = await ghReadFile(path);
+        if (typeof content === 'string' && content.startsWith("Error:")) return content;
+    }
+    const lines = content.split('\n').length;
+    const sizeKb = Math.round(content.length / 1024);
+    return `File: ${path}\nTotal lines: ${lines}\nSize: ~${sizeKb}KB\nTip: Use view_file with start_line/end_line to read specific sections.`;
+}
+
+async function ghPatchFileMulti(path, patches, commit_message) {
+    // patches = [{search, replace}, ...] — apply all in one GitHub commit
+    try {
+        let content = fileCache.get(path);
+        if (!content) {
+            content = await ghReadFile(path);
+            if (content.startsWith("Error:")) return content;
+        }
+
+        const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const report = [];
+        for (const { search, replace } of patches) {
+            const matches = content.match(new RegExp(escapeRegExp(search), 'g')) || [];
+            if (matches.length === 0) {
+                report.push(`ERROR: Did not find: "${search.substring(0,80)}..."`);
+                continue;
+            }
+            if (matches.length > 1) {
+                report.push(`ERROR: Found ${matches.length} occurrences of: "${search.substring(0,80)}..." — make it more unique.`);
+                continue;
+            }
+            content = content.replace(search, replace);
+            report.push(`OK: Replaced "${search.substring(0,60)}..."`);
+        }
+
+        if (report.some(r => r.startsWith('ERROR'))) {
+            return `Patch aborted due to errors:\n${report.join('\n')}`;
+        }
+
+        const result = await ghWriteFile(path, content, commit_message || `Multi-patch ${path}`);
+        return `${result}\n\nPatch report:\n${report.join('\n')}`;
+    } catch (e) { return `Error in multi-patch: ${e.message}`; }
+}
+
 const toolsMap = { 
     list_files: (args) => ghListFiles(args.path || ""), 
     read_file: (args) => ghReadFile(args.path), 
     view_file: (args) => ghViewFile(args.path, args.start_line, args.end_line),
     grep_search: (args) => ghGrepSearch(args.path, args.query),
-    write_file: (args) => {
-        fileCache.delete(args.path); // Bust cache on write
-        return ghWriteFile(args.path, args.content, args.commit_message);
-    },
-    patch_file: (args) => {
-        fileCache.delete(args.path); // Bust cache on write
-        return ghPatchFile(args.path, args.search, args.replace, args.commit_message);
-    },
+    line_count: (args) => ghLineCount(args.path),
+    write_file: (args) => ghWriteFile(args.path, args.content, args.commit_message),
+    patch_file: (args) => ghPatchFile(args.path, args.search, args.replace, args.commit_message),
+    patch_file_multi: (args) => ghPatchFileMulti(args.path, args.patches, args.commit_message),
     get_repo_map: () => ghGetRepoMap(),
     search_code: (args) => ghSearchCode(args.query),
     get_build_status: () => ghGetBuildStatus(),
@@ -1057,35 +1106,41 @@ CRITICAL: You are currently in PLANNING MODE.
 5. If the user says "Go", "Approve", or similar, then you may begin using write/patch tools.`;
 
     const executionInstruction = `${baseInstruction}
-- AVOID TOOL LOOPS: If you cannot find what you want after a few searches, STOP and ask the user. DO NOT repeat the exact same tool calls in an endless loop.
-- VISION MODE: If an image is provided, you are a Vision-to-Code Expert. Analyze pixels (padding, colors, layout) and map them to CSS selectors or HTML structure. Use 'semantic_search' to find the relevant style files.
-- MEMORY: Use 'recall_memories' at the start of complex tasks to remember user preferences. Use 'remember_this' if the user gives important project rules.
-- PATCHING: Prefer 'patch_file' over 'write_file' for existing files.
-- BUILD LOOP: If you push code, check 'get_build_status'. If it fails, fix it.
-- OPTIMIZATION: Use 'run_lighthouse' to check performance/SEO of the live site. If performance is low, optimize images or CSS.
-- SEMANTIC SEARCH: Use 'semantic_search' to find logic across the repo by intent.
-- EXPLORATION: Use 'get_repo_map' for context.
-- PROACTIVE HYPOTHESIS: Do not wait for 100% certainty. Form a hypothesis early and use 'patch_file' to test it. Failing fast is better than over-searching.
-- TURN BUDGET (100 Turns): You have a huge budget, but after turn 15 of pure exploration, you MUST switch to execution mode.
-- ANTI-GRAVITY MINDSET: Act like a senior dev with 5 minutes before a production deploy. Use 'get_repo_map' once, pick the most likely file, and fix it. 
-- CACHING: Do not re-read files you already have in cache.`;
+⚠️ LARGE FILE WARNING: This repo contains very large JS files (some 10,000+ lines, 900KB+). Reading them in full wastes tokens and time. Always:
+  1. Use 'line_count' FIRST to see file size before reading.
+  2. Use 'grep_search' to find the section you want (returns line numbers).
+  3. Use 'view_file' with start_line/end_line to read ONLY the relevant section (200 lines at a time).
+  4. Use 'patch_file' to surgically replace ONLY the changed block — never rewrite the whole file.
+  5. For multiple changes to the same file, use 'patch_file_multi' to do it all in ONE commit.
+
+- AVOID TOOL LOOPS: If you cannot find what you want after a few searches, STOP and ask the user.
+- VISION MODE: If an image is provided, analyze pixels and map to CSS/HTML. Use 'semantic_search' to find relevant style files.
+- MEMORY: Use 'recall_memories' at the start of complex tasks. Use 'remember_this' for project rules.
+- PATCHING: ALWAYS prefer 'patch_file' or 'patch_file_multi'. Only use 'write_file' for NEW files.
+- BUILD LOOP: After pushing code, check 'get_build_status'. Fix failures immediately.
+- PROACTIVE HYPOTHESIS: Form a hypothesis early and patch to test it. Failing fast beats over-analyzing.
+- TURN BUDGET: After 10 exploration turns without a patch, you MUST start editing.
+- ANTI-GRAVITY MINDSET: Act like a senior dev with 5 minutes before a production deploy.
+- CACHING: Do not re-read files already in cache. The cache persists across turns.`;
 
     currentAiModel = genAI.getGenerativeModel({ 
         model: modelName, 
         safetySettings,
         tools: [{
             functionDeclarations: [
+                { name: "line_count", description: "FAST: Get the total line count and file size WITHOUT reading content. Use this before view_file on any unfamiliar file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
                 { name: "list_files", description: "List files in a directory.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
                 { name: "get_repo_map", description: "Get the entire repository structure recursively." },
                 { name: "search_code", description: "Search for strings/symbols across all files.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
-                { name: "patch_file", description: "Surgical update block.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
-                { name: "read_file", description: "Read an entire file. WARNING: May be pruned if too large. Prefer view_file for code.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
-                { name: "view_file", description: "Recommended. View lines of a file with line numbers to explore without hitting context limits.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, start_line: { type: "INTEGER" }, end_line: { type: "INTEGER" } }, required: ["path"] } },
-                { name: "grep_search", description: "Search for a pattern/string inside a specific file. Returns line numbers and contents.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, query: { type: "STRING" } }, required: ["path", "query"] } },
-                { name: "write_file", description: "Full file overwrite.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
+                { name: "grep_search", description: "Search for a pattern/string inside a SPECIFIC file. Returns line numbers. Use this to find WHICH lines to view before calling view_file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, query: { type: "STRING" } }, required: ["path", "query"] } },
+                { name: "view_file", description: "View specific lines of a file. ALWAYS provide start_line and end_line to avoid loading huge files. Use grep_search first to find the right line range.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, start_line: { type: "INTEGER" }, end_line: { type: "INTEGER" } }, required: ["path"] } },
+                { name: "patch_file", description: "Surgical single replacement. Provide enough surrounding context (3-5 lines) in 'search' to make it unique. Prefer patch_file_multi for multiple changes.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
+                { name: "patch_file_multi", description: "PREFERRED for large files: Apply multiple surgical replacements to ONE file in a SINGLE commit. Much faster than calling patch_file repeatedly.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, patches: { type: "ARRAY", items: { type: "OBJECT", properties: { search: { type: "STRING" }, replace: { type: "STRING" } }, required: ["search", "replace"] } }, commit_message: { type: "STRING" } }, required: ["path", "patches"] } },
+                { name: "read_file", description: "Read an ENTIRE file. WARNING: Very slow/expensive on large files. Only use for small config/JSON files. Use view_file+grep_search for code files.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
+                { name: "write_file", description: "Full file overwrite. ONLY use for NEW files or very small files. For existing code, use patch_file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
                 { name: "get_build_status", description: "Check CI/Build logs." },
                 { name: "run_lighthouse", description: "Run a live performance/SEO/Accessibility audit on the production URL." },
-                { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index. Use this when you are not sure where a specific feature is implemented.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
+                { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
                 { name: "remember_this", description: "Save a fact about the user, their tech preferences, or project rules for long-term memory.", parameters: { type: "OBJECT", properties: { fact: { type: "STRING" }, category: { type: "STRING" } }, required: ["fact"] } },
                 { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } }
             ]
@@ -1407,19 +1462,21 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
     messages.push({ role: 'user', content: message });
     
     const tools = [
+        { type: "function", function: { name: "line_count", description: "FAST: Get line count + size without reading content. Use before view_file.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
         { type: "function", function: { name: "list_files", description: "List files in a directory.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
         { type: "function", function: { name: "get_repo_map", description: "Get the recursive file tree." } },
-        { type: "function", function: { name: "patch_file", description: "Surgical block-replacement.", parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "search", "replace"] } } },
+        { type: "function", function: { name: "grep_search", description: "Find lines matching a pattern in a file. Use to locate line numbers before view_file.", parameters: { type: "object", properties: { path: { type: "string" }, query: { type: "string" } }, required: ["path", "query"] } } },
+        { type: "function", function: { name: "view_file", description: "View specific lines. Always provide start_line and end_line.", parameters: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, required: ["path"] } } },
+        { type: "function", function: { name: "patch_file", description: "Surgical single replacement.", parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "search", "replace"] } } },
+        { type: "function", function: { name: "patch_file_multi", description: "PREFERRED: Multiple replacements in one commit.", parameters: { type: "object", properties: { path: { type: "string" }, patches: { type: "array", items: { type: "object", properties: { search: { type: "string" }, replace: { type: "string" } }, required: ["search", "replace"] } }, commit_message: { type: "string" } }, required: ["path", "patches"] } } },
         { type: "function", function: { name: "get_build_status", description: "Check CI/Build logs." } },
         { type: "function", function: { name: "run_lighthouse", description: "Audit live site performance." } },
         { type: "function", function: { name: "semantic_search", description: "Find code by meaning using Supabase.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "remember_this", description: "Save user preferences.", parameters: { type: "object", properties: { fact: { type: "string" }, category: { type: "string" } }, required: ["fact"] } } },
         { type: "function", function: { name: "recall_memories", description: "Recall user history.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "search_code", description: "Search for specific code strings across the repo.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
-        { type: "function", function: { name: "read_file", description: "Read entire file content", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
-        { type: "function", function: { name: "view_file", description: "Recommended. View lines of a file with line numbers to explore codebase without hitting context limits.", parameters: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, required: ["path"] } } },
-        { type: "function", function: { name: "grep_search", description: "Search for a pattern/string inside a specific file. Returns line numbers and contents.", parameters: { type: "object", properties: { path: { type: "string" }, query: { type: "string" } }, required: ["path", "query"] } } },
-        { type: "function", function: { name: "write_file", description: "Full file overwrite.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
+        { type: "function", function: { name: "read_file", description: "Read ENTIRE file. Slow on large files. Prefer view_file+grep_search.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
+        { type: "function", function: { name: "write_file", description: "Full file overwrite. Only for new/tiny files.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
     ];
 
     try {
