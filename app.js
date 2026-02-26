@@ -209,16 +209,21 @@ function setupEventListeners() {
     // Pull to Refresh Logic
     const pullToRefreshEl = document.getElementById('pull-to-refresh');
     const appEl = document.getElementById('app');
+    let isPulling = false;
 
     window.addEventListener('touchstart', (e) => {
-        if (chatHistory.scrollTop === 0) {
+        if (chatHistory.scrollTop <= 0) {
+            isPulling = true;
             touchStart = e.touches[0].pageY;
+        } else {
+            isPulling = false;
         }
     }, { passive: true });
 
     window.addEventListener('touchmove', (e) => {
+        if (!isPulling) return;
         const touchCurrent = e.touches[0].pageY;
-        if (chatHistory.scrollTop === 0) {
+        if (chatHistory.scrollTop <= 0) {
             if (touchCurrent > touchStart) {
                 pullDistance = Math.min((touchCurrent - touchStart) * 0.5, 120);
                 pullToRefreshEl.style.transform = `translateY(${pullDistance}px)`;
