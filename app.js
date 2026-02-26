@@ -738,8 +738,13 @@ async function ghPatchFile(path, search, replace, commit_message) {
         const original = await ghReadFile(path);
         if (original.startsWith("Error:")) return original;
         
-        if (!original.includes(search)) {
+        const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const matches = original.match(new RegExp(escapeRegExp(search), 'g')) || [];
+        if (matches.length === 0) {
             return `Error: Did not find the exact 'search' text in ${path}. Please ensure whitespace/indentation are identical to what you read.`;
+        }
+        if (matches.length > 1) {
+            return `Error: The search block was found ${matches.length} times in ${path}. Please provide a longer, more unique snippet of code to ensure the correct block is replaced.`;
         }
         
         const updated = original.replace(search, replace);
@@ -1032,7 +1037,9 @@ CRITICAL: You are currently in PLANNING MODE.
 - OPTIMIZATION: Use 'run_lighthouse' to check performance/SEO of the live site. If performance is low, optimize images or CSS.
 - SEMANTIC SEARCH: Use 'semantic_search' to find logic across the repo by intent.
 - EXPLORATION: Use 'get_repo_map' for context.
-- VIEWING FILES: DO NOT read the whole file if it's large. Use 'view_file' with 'start_line' and 'end_line' to explore chunks of files (max 500 lines at a time). Use 'grep_search' to find specific strings in a file quickly!
+- VIEWING FILES: DO NOT read the whole file if it's large. Use 'view_file' (max 500 lines) or 'grep_search' to explore efficiently.
+- SYSTEM BUDGET: You have a limit of 60 tool calls per message cycle. Use them wisely.
+- MINDSET: You are an Elite Engineer. Write clean, modular, and well-documented code. Favor speed but NEVR at the expense of correctness.
 - CACHING: Do not re-read files you already have in cache.`;
 
     currentAiModel = genAI.getGenerativeModel({ 
@@ -1040,6 +1047,7 @@ CRITICAL: You are currently in PLANNING MODE.
         safetySettings,
         tools: [{
             functionDeclarations: [
+                { name: "list_files", description: "List files in a directory.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
                 { name: "get_repo_map", description: "Get the entire repository structure recursively." },
                 { name: "search_code", description: "Search for strings/symbols across all files.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
                 { name: "patch_file", description: "Surgical update block.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
@@ -1327,7 +1335,8 @@ async function callOpenAICompatibleModel(provider, model, message, image, loadin
 You have direct access to the user\'s GitHub repository \'${currentRepo}\' on branch \'${currentBranch}\'. 
 Use tools to read/write files and explain your actions. 
 CRITICAL: Avoid getting stuck in tool loops. If a search fails repeatedly, stop and ask the user.
-CRITICAL: When updating code, ensure you provide the FULL content of the file to 'write_file'. Use 'view_file' with 'start_line' and 'end_line' instead of reading whole files if they are large.` });
+CRITICAL: You have a 60-turn tool budget. Be efficient.
+CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_file' for exploration.` });
 
     // Add history
     chat.messages.forEach(m => {
@@ -1341,6 +1350,7 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
     messages.push({ role: 'user', content: message });
     
     const tools = [
+        { type: "function", function: { name: "list_files", description: "List files in a directory.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
         { type: "function", function: { name: "get_repo_map", description: "Get the recursive file tree." } },
         { type: "function", function: { name: "patch_file", description: "Surgical block-replacement.", parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "search", "replace"] } } },
         { type: "function", function: { name: "get_build_status", description: "Check CI/Build logs." } },
@@ -1357,8 +1367,16 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
 
     try {
         let toolHistory = new Set();
+        let toolDepth = 0;
+        const MAX_TOOL_DEPTH = 60;
+
         while(true) {
             if (currentAbortController.signal.aborted) break;
+            if (toolDepth >= MAX_TOOL_DEPTH) {
+                appendMessageOnly('system', "Maximum tool depth reached. Stopping to prevent loop.");
+                break;
+            }
+            
             
             const res = await fetch(endpoint, {
                 method: 'POST',
@@ -1411,6 +1429,7 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
 
             const toolResults = await Promise.all(toolPromises);
             messages.push(...toolResults);
+            toolDepth++;
             
             chatHistory.appendChild(loading);
         }
