@@ -26,6 +26,7 @@ const enableSyncBtn = document.getElementById('enable-sync');
 const deepseekKeyInput = document.getElementById('deepseek-key');
 const minimaxKeyInput = document.getElementById('minimax-key');
 const planningModeToggle = document.getElementById('planning-mode-toggle');
+const indexRepoBtn = document.getElementById('index-repo-btn');
 
 // Mobile and Tabs
 const sidebar = document.getElementById('sidebar');
@@ -117,6 +118,7 @@ function setupEventListeners() {
     planningModeToggle.addEventListener('change', () => {
         setupAI();
     });
+    if (indexRepoBtn) indexRepoBtn.addEventListener('click', () => sbIndexRepo());
 
     attachBtn.addEventListener('click', (e) => {
         e.preventDefault();
@@ -702,6 +704,84 @@ async function ghGetBuildStatus() {
     } catch (e) { return `Error fetching build status: ${e.message}`; }
 }
 
+// --- Semantic Search (Supabase) ---
+async function getEmbedding(text) {
+    if (!genAI) return null;
+    const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+    const result = await model.embedContent(text);
+    return result.embedding.values;
+}
+
+async function sbIndexRepo() {
+    if (!supabase || !currentRepo) { alert("Please connect Supabase and GitHub first."); return; }
+    
+    updateStatus("Indexing Brain...", "neutral");
+    indexRepoBtn.textContent = "Indexing... ⏳";
+    indexRepoBtn.disabled = true;
+
+    try {
+        const repoMapStr = await ghGetRepoMap(true);
+        const files = repoMapStr.split('\n')
+            .filter(f => f.startsWith('📄'))
+            .map(f => f.replace('📄 ', ''))
+            .filter(f => /\.(js|ts|py|html|css|md|json)$/.test(f)) // Only index common code files
+            .filter(f => !f.includes('node_modules') && !f.includes('.git'));
+
+        // Clear existing index for this repo
+        await supabase.from('repo_index').delete().eq('repo_name', currentRepo);
+
+        let count = 0;
+        for (const path of files) {
+            const content = await ghReadFile(path);
+            if (content.length > 30000) continue; // Skip massive files for now or chunk them
+            
+            // Simple chunking: 1000 characters per chunk (approx)
+            const chunks = content.match(/[\s\S]{1,4000}/g) || [content];
+            
+            for (const chunk of chunks) {
+                const embedding = await getEmbedding(chunk);
+                if (embedding) {
+                    await supabase.from('repo_index').insert({
+                        repo_name: currentRepo,
+                        file_path: path,
+                        content: chunk,
+                        embedding: embedding
+                    });
+                }
+            }
+            count++;
+            indexRepoBtn.textContent = `Indexed ${count}/${files.length}`;
+        }
+        
+        alert(`Successfully indexed ${files.length} files! GitChat now has 'Semantic Memory' for this repo.`);
+        updateStatus("Brain Indexed ✨", "ok");
+    } catch (e) {
+        console.error("Indexing failed:", e);
+        alert("Indexing failed: " + e.message);
+    } finally {
+        indexRepoBtn.textContent = "Index Repo (Semantic Search) 🧠";
+        indexRepoBtn.disabled = false;
+    }
+}
+
+async function sbSemanticSearch(query) {
+    if (!supabase) return "Supabase not connected.";
+    try {
+        const queryEmbedding = await getEmbedding(query);
+        const { data, error } = await supabase.rpc('match_code', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.5,
+            match_count: 5,
+            repo_filter: currentRepo
+        });
+        
+        if (error) throw error;
+        if (!data || data.length === 0) return "No semantically similar code found. Try a different query.";
+        
+        return data.map(match => `--- File: ${match.file_path} (Similarity: ${Math.round(match.similarity * 100)}%) ---\n${match.content}`).join('\n\n');
+    } catch (e) { return `Search error: ${e.message}`; }
+}
+
 async function ghWriteFile(path, content, commit_message) {
     try {
         let sha = undefined;
@@ -759,7 +839,8 @@ const toolsMap = {
     },
     get_repo_map: () => ghGetRepoMap(),
     search_code: (args) => ghSearchCode(args.query),
-    get_build_status: () => ghGetBuildStatus()
+    get_build_status: () => ghGetBuildStatus(),
+    semantic_search: (args) => sbSemanticSearch(args.query)
 };
 
 function mapModelName(name) {
@@ -819,7 +900,8 @@ CRITICAL: You are currently in PLANNING MODE.
     const executionInstruction = `${baseInstruction}
 - GOAL: Operate with high precision and speed.
 - PATCHING: Prefer 'patch_file' over 'write_file' for existing files—it is 10x faster and safer.
-- BUILD LOOP: If you push code, check 'get_build_status' after 30-60s. If it fails, READ the logs and fix it immediately.
+- BUILD LOOP: If you push code, check 'get_build_status'. If it fails, fix it.
+- SEMANTIC SEARCH: Use 'semantic_search' to find logic across the repo by intent.
 - EXPLORATION: Use 'get_repo_map' for context.
 - CACHING: Do not re-read files you already have in cache.`;
 
@@ -833,7 +915,8 @@ CRITICAL: You are currently in PLANNING MODE.
                 { name: "patch_file", description: "Surgical update block.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
                 { name: "read_file", description: "Read a file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
                 { name: "write_file", description: "Full file overwrite.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
-                { name: "get_build_status", description: "Check CI/Build logs." }
+                { name: "get_build_status", description: "Check CI/Build logs." },
+                { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index. Use this when you are not sure where a specific feature is implemented.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } }
             ]
         }],
         systemInstruction: isPlanning ? planningInstruction : executionInstruction
@@ -1103,6 +1186,7 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
         { type: "function", function: { name: "get_repo_map", description: "Get the recursive file tree." } },
         { type: "function", function: { name: "patch_file", description: "Surgical block-replacement.", parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "search", "replace"] } } },
         { type: "function", function: { name: "get_build_status", description: "Check CI/Build logs." } },
+        { type: "function", function: { name: "semantic_search", description: "Find code by meaning using Supabase.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "search_code", description: "Search for specific code strings across the repo.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "read_file", description: "Read file content", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
         { type: "function", function: { name: "write_file", description: "Full file overwrite.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
