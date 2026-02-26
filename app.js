@@ -651,6 +651,49 @@ async function ghReadFile(path) {
     } catch (e) { return `Error: ${e.message}`; }
 }
 
+async function ghViewFile(path, startLine, endLine) {
+    let content = fileCache.get(path);
+    if (!content) {
+        content = await ghReadFile(path);
+        if (content.startsWith("Error:")) return content;
+    }
+    const lines = content.split('\n');
+    const totalLines = lines.length;
+    
+    if (startLine === undefined || startLine === null) startLine = 1;
+    if (endLine === undefined || endLine === null) endLine = Math.min(startLine + 500, totalLines);
+    
+    startLine = Math.max(1, startLine);
+    endLine = Math.min(totalLines, endLine);
+    
+    if (startLine > endLine) return "Error: start_line is greater than end_line";
+    
+    let result = lines.slice(startLine - 1, endLine).map((line, i) => `${startLine + i}: ${line}`).join('\n');
+    if (result.length > 30000) {
+        result = result.substring(0, 30000) + "\n... [TRUNCATED - Too many lines!]";
+    }
+    return `File: ${path}\nLines: ${startLine} to ${endLine} of ${totalLines}\n\n${result}`;
+}
+
+async function ghGrepSearch(path, query) {
+    let content = fileCache.get(path);
+    if (!content) {
+        content = await ghReadFile(path);
+        if (content.startsWith("Error:")) return content;
+    }
+    const lines = content.split('\n');
+    let results = [];
+    const lowerQuery = query.toLowerCase();
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].toLowerCase().includes(lowerQuery)) {
+            results.push(`${i + 1}: ${lines[i]}`);
+        }
+    }
+    if (results.length === 0) return `No matches found for '${query}' in ${path}.`;
+    if (results.length > 100) return `Found ${results.length} matches. Showing first 100:\n` + results.slice(0, 100).join('\n');
+    return results.join('\n');
+}
+
 async function ghGetRepoMap(forceRefresh = false) {
     const cacheKey = `gitchat_map_${currentRepo}_${currentBranch}`;
     if (!forceRefresh) {
@@ -906,6 +949,8 @@ async function ghWriteFile(path, content, commit_message) {
 const toolsMap = { 
     list_files: (args) => ghListFiles(args.path || ""), 
     read_file: (args) => ghReadFile(args.path), 
+    view_file: (args) => ghViewFile(args.path, args.start_line, args.end_line),
+    grep_search: (args) => ghGrepSearch(args.path, args.query),
     write_file: (args) => {
         fileCache.delete(args.path); // Bust cache on write
         return ghWriteFile(args.path, args.content, args.commit_message);
@@ -986,6 +1031,7 @@ CRITICAL: You are currently in PLANNING MODE.
 - OPTIMIZATION: Use 'run_lighthouse' to check performance/SEO of the live site. If performance is low, optimize images or CSS.
 - SEMANTIC SEARCH: Use 'semantic_search' to find logic across the repo by intent.
 - EXPLORATION: Use 'get_repo_map' for context.
+- VIEWING FILES: DO NOT read the whole file if it's large. Use 'view_file' with 'start_line' and 'end_line' to explore chunks of files (max 500 lines at a time). Use 'grep_search' to find specific strings in a file quickly!
 - CACHING: Do not re-read files you already have in cache.`;
 
     currentAiModel = genAI.getGenerativeModel({ 
@@ -996,7 +1042,9 @@ CRITICAL: You are currently in PLANNING MODE.
                 { name: "get_repo_map", description: "Get the entire repository structure recursively." },
                 { name: "search_code", description: "Search for strings/symbols across all files.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
                 { name: "patch_file", description: "Surgical update block.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
-                { name: "read_file", description: "Read a file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
+                { name: "read_file", description: "Read an entire file. WARNING: May be pruned if too large. Prefer view_file for code.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
+                { name: "view_file", description: "Recommended. View lines of a file with line numbers to explore without hitting context limits.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, start_line: { type: "INTEGER" }, end_line: { type: "INTEGER" } }, required: ["path"] } },
+                { name: "grep_search", description: "Search for a pattern/string inside a specific file. Returns line numbers and contents.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, query: { type: "STRING" } }, required: ["path", "query"] } },
                 { name: "write_file", description: "Full file overwrite.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
                 { name: "get_build_status", description: "Check CI/Build logs." },
                 { name: "run_lighthouse", description: "Run a live performance/SEO/Accessibility audit on the production URL." },
@@ -1150,7 +1198,7 @@ async function handleSend() {
 
         let aiMsgNode = null;
         let toolDepth = 0;
-        const MAX_TOOL_DEPTH = 10;
+        const MAX_TOOL_DEPTH = 60;
         let currentParts = parts;
 
         while (true) {
@@ -1266,7 +1314,7 @@ async function callOpenAICompatibleModel(provider, model, message, image, loadin
     messages.push({ role: 'system', content: `You are GitChat AI, an expert autonomous software engineer. 
 You have direct access to the user\'s GitHub repository \'${currentRepo}\' on branch \'${currentBranch}\'. 
 Use tools to read/write files and explain your actions. 
-CRITICAL: When updating code, ensure you provide the FULL content of the file to \'write_file\'.` });
+CRITICAL: When updating code, ensure you provide the FULL content of the file to 'write_file'. Use 'view_file' with 'start_line' and 'end_line' instead of reading whole files if they are large.` });
 
     // Add history
     chat.messages.forEach(m => {
@@ -1288,7 +1336,9 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
         { type: "function", function: { name: "remember_this", description: "Save user preferences.", parameters: { type: "object", properties: { fact: { type: "string" }, category: { type: "string" } }, required: ["fact"] } } },
         { type: "function", function: { name: "recall_memories", description: "Recall user history.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "search_code", description: "Search for specific code strings across the repo.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
-        { type: "function", function: { name: "read_file", description: "Read file content", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
+        { type: "function", function: { name: "read_file", description: "Read entire file content", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
+        { type: "function", function: { name: "view_file", description: "Recommended. View lines of a file with line numbers to explore codebase without hitting context limits.", parameters: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, required: ["path"] } } },
+        { type: "function", function: { name: "grep_search", description: "Search for a pattern/string inside a specific file. Returns line numbers and contents.", parameters: { type: "object", properties: { path: { type: "string" }, query: { type: "string" } }, required: ["path", "query"] } } },
         { type: "function", function: { name: "write_file", description: "Full file overwrite.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
     ];
 
