@@ -218,14 +218,20 @@ function setupEventListeners() {
 
     window.addEventListener('touchmove', (e) => {
         const touchCurrent = e.touches[0].pageY;
-        if (chatHistory.scrollTop === 0 && touchCurrent > touchStart) {
-            pullDistance = Math.min((touchCurrent - touchStart) * 0.5, 120);
-            pullToRefreshEl.style.transform = `translateY(${pullDistance}px)`;
-            appEl.style.transform = `translateY(${pullDistance}px)`;
-            if (pullDistance >= PULL_THRESHOLD) {
-                pullToRefreshEl.querySelector('span').textContent = "Release to refresh...";
-            } else {
-                pullToRefreshEl.querySelector('span').textContent = "Pull to refresh...";
+        if (chatHistory.scrollTop === 0) {
+            if (touchCurrent > touchStart) {
+                pullDistance = Math.min((touchCurrent - touchStart) * 0.5, 120);
+                pullToRefreshEl.style.transform = `translateY(${pullDistance}px)`;
+                appEl.style.transform = `translateY(${pullDistance}px)`;
+                if (pullDistance >= PULL_THRESHOLD) {
+                    pullToRefreshEl.querySelector('span').textContent = "Release to refresh...";
+                } else {
+                    pullToRefreshEl.querySelector('span').textContent = "Pull to refresh...";
+                }
+            } else if (pullDistance > 0) {
+                pullDistance = 0;
+                pullToRefreshEl.style.transform = `translateY(0)`;
+                appEl.style.transform = `translateY(0)`;
             }
         }
     }, { passive: true });
