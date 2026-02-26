@@ -25,6 +25,7 @@ const supabaseKeyInput = document.getElementById('supabase-key');
 const enableSyncBtn = document.getElementById('enable-sync');
 const deepseekKeyInput = document.getElementById('deepseek-key');
 const minimaxKeyInput = document.getElementById('minimax-key');
+const productionUrlInput = document.getElementById('production-url');
 const planningModeToggle = document.getElementById('planning-mode-toggle');
 const indexRepoBtn = document.getElementById('index-repo-btn');
 
@@ -453,6 +454,7 @@ async function loadSettings() {
             githubTokenInput.value = config.GITHUB_TOKEN || '';
             supabaseUrlInput.value = config.SUPABASE_URL || '';
             supabaseKeyInput.value = config.SUPABASE_KEY || '';
+            productionUrlInput.value = config.PRODUCTION_URL || '';
             
             if (geminiKeyInput.value) setupAI();
             if (githubTokenInput.value) {
@@ -475,6 +477,7 @@ function saveSettings() {
     localStorage.setItem('gitchat_github_branch', githubBranchInput.value.trim());
     localStorage.setItem('gitchat_deepseek_key', deepseekKeyInput.value.trim());
     localStorage.setItem('gitchat_minimax_key', minimaxKeyInput.value.trim());
+    localStorage.setItem('gitchat_production_url', productionUrlInput.value.trim());
     settingsContent.classList.remove('active');
     setupAI();
     fetchUserRepos(githubRepoSelect.value);
@@ -506,11 +509,13 @@ async function initSupabase(silent = false) {
                 githubBranchInput.value = cloud.github_branch || githubBranchInput.value;
                 deepseekKeyInput.value = cloud.deepseek_key || deepseekKeyInput.value;
                 minimaxKeyInput.value = cloud.minimax_key || minimaxKeyInput.value;
+                productionUrlInput.value = cloud.production_url || productionUrlInput.value;
                 localStorage.setItem('gitchat_gemini_key', geminiKeyInput.value);
                 localStorage.setItem('gitchat_github_token', githubTokenInput.value);
                 localStorage.setItem('gitchat_github_branch', githubBranchInput.value);
                 localStorage.setItem('gitchat_deepseek_key', deepseekKeyInput.value);
                 localStorage.setItem('gitchat_minimax_key', minimaxKeyInput.value);
+                localStorage.setItem('gitchat_production_url', productionUrlInput.value);
                 if (cloud.github_repo) localStorage.setItem('gitchat_github_repo', cloud.github_repo);
                 setupAI();
                 if(!silent) alert("Settings restored from Cloud! ☁️✨");
@@ -546,7 +551,8 @@ async function pushSettingsToCloud() {
         github_repo: githubRepoSelect.value,
         github_branch: githubBranchInput.value.trim(),
         deepseek_key: deepseekKeyInput.value.trim(),
-        minimax_key: minimaxKeyInput.value.trim()
+        minimax_key: minimaxKeyInput.value.trim(),
+        production_url: productionUrlInput.value.trim()
     };
     await supabase.from('settings').upsert({ id: 'user_settings', data: settings });
 }
@@ -812,6 +818,37 @@ async function sbRecallMemories(query) {
     } catch (e) { return `Memory recall error: ${e.message}`; }
 }
 
+// --- Lighthouse Audits (PageSpeed Insights API) ---
+async function ghRunLighthouse() {
+    const url = productionUrlInput.value.trim();
+    if (!url) return "Error: No Production/Netlify URL configured in settings.";
+    
+    try {
+        const apiEndpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=SEO&category=ACCESSIBILITY&category=BEST_PRACTICES`;
+        const res = await fetch(apiEndpoint);
+        if (!res.ok) throw new Error(`${res.status}`);
+        const data = await res.json();
+        
+        const categories = data.lighthouseResult.categories;
+        const result = {
+            performance: Math.round(categories.performance.score * 100),
+            seo: Math.round(categories.seo.score * 100),
+            accessibility: Math.round(categories.accessibility.score * 100),
+            bestPractices: Math.round(categories['best-practices'].score * 100)
+        };
+
+        const topIssues = data.lighthouseResult.audits['modern-image-formats']?.details?.items || [];
+        let summary = `Lighthouse Report for ${url}:\n`;
+        summary += `- Performance: ${result.performance}%\n- SEO: ${result.seo}%\n- Accessibility: ${result.accessibility}%\n- Best Practices: ${result.bestPractices}%\n\n`;
+        
+        if (topIssues.length > 0) {
+            summary += `⚠️ Key Optimization Opportunity: Consider converting high-res images to WebP/AVIF to save ${Math.round(topIssues[0].wastedBytes / 1024)}KB.`;
+        }
+        
+        return summary;
+    } catch (e) { return `Lighthouse error: ${e.message}`; }
+}
+
 async function ghWriteFile(path, content, commit_message) {
     try {
         let sha = undefined;
@@ -872,7 +909,8 @@ const toolsMap = {
     get_build_status: () => ghGetBuildStatus(),
     semantic_search: (args) => sbSemanticSearch(args.query),
     remember_this: (args) => sbRememberFact(args.fact, args.category),
-    recall_memories: (args) => sbRecallMemories(args.query)
+    recall_memories: (args) => sbRecallMemories(args.query),
+    run_lighthouse: () => ghRunLighthouse()
 };
 
 function mapModelName(name) {
@@ -935,6 +973,7 @@ CRITICAL: You are currently in PLANNING MODE.
 - MEMORY: Use 'recall_memories' at the start of complex tasks to remember user preferences. Use 'remember_this' if the user gives important project rules.
 - PATCHING: Prefer 'patch_file' over 'write_file' for existing files.
 - BUILD LOOP: If you push code, check 'get_build_status'. If it fails, fix it.
+- OPTIMIZATION: Use 'run_lighthouse' to check performance/SEO of the live site. If performance is low, optimize images or CSS.
 - SEMANTIC SEARCH: Use 'semantic_search' to find logic across the repo by intent.
 - EXPLORATION: Use 'get_repo_map' for context.
 - CACHING: Do not re-read files you already have in cache.`;
@@ -950,6 +989,7 @@ CRITICAL: You are currently in PLANNING MODE.
                 { name: "read_file", description: "Read a file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
                 { name: "write_file", description: "Full file overwrite.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
                 { name: "get_build_status", description: "Check CI/Build logs." },
+                { name: "run_lighthouse", description: "Run a live performance/SEO/Accessibility audit on the production URL." },
                 { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index. Use this when you are not sure where a specific feature is implemented.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
                 { name: "remember_this", description: "Save a fact about the user, their tech preferences, or project rules for long-term memory.", parameters: { type: "OBJECT", properties: { fact: { type: "STRING" }, category: { type: "STRING" } }, required: ["fact"] } },
                 { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } }
@@ -1222,6 +1262,7 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
         { type: "function", function: { name: "get_repo_map", description: "Get the recursive file tree." } },
         { type: "function", function: { name: "patch_file", description: "Surgical block-replacement.", parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "search", "replace"] } } },
         { type: "function", function: { name: "get_build_status", description: "Check CI/Build logs." } },
+        { type: "function", function: { name: "run_lighthouse", description: "Audit live site performance." } },
         { type: "function", function: { name: "semantic_search", description: "Find code by meaning using Supabase.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "remember_this", description: "Save user preferences.", parameters: { type: "object", properties: { fact: { type: "string" }, category: { type: "string" } }, required: ["fact"] } } },
         { type: "function", function: { name: "recall_memories", description: "Recall user history.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
