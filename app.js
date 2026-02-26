@@ -1235,7 +1235,8 @@ async function handleSend() {
 
         let aiMsgNode = null;
         let toolDepth = 0;
-        const MAX_TOOL_DEPTH = 60;
+        const MAX_TOOL_DEPTH = 100;
+        let hasEditted = false;
         let currentParts = parts;
         let toolHistory = new Set();
 
