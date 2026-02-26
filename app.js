@@ -1220,8 +1220,27 @@ async function handleSend() {
                 break;
             }
 
-            const result = await session.sendMessage(currentParts, { signal: currentAbortController.signal });
-            const response = result.response;
+            let result, response;
+            let retryCount = 0;
+            const maxRetries = 3;
+            
+            while (retryCount <= maxRetries) {
+                try {
+                    result = await session.sendMessage(currentParts, { signal: currentAbortController.signal });
+                    response = result.response;
+                    break;
+                } catch (err) {
+                    if (retryCount < maxRetries && (err.message?.includes('fetch') || err.message?.includes('429') || err.message?.includes('503'))) {
+                        retryCount++;
+                        const delay = retryCount * 2000;
+                        console.warn(`Gemini fetch error, retrying in ${delay}ms... (Attempt ${retryCount}/${maxRetries})`);
+                        await new Promise(r => setTimeout(r, delay));
+                    } else {
+                        throw err;
+                    }
+                }
+            }
+            
             const textResponse = response.text();
             const functionCalls = response.functionCalls();
 
@@ -1381,12 +1400,35 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
             }
             
             
-            const res = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-                body: JSON.stringify({ model, messages, tools, tool_choice: "auto" }),
-                signal: currentAbortController.signal
-            });
+            let res;
+            let retryCount = 0;
+            const maxRetries = 3;
+            
+            while (retryCount <= maxRetries) {
+                try {
+                    res = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+                        body: JSON.stringify({ model, messages, tools, tool_choice: "auto" }),
+                        signal: currentAbortController.signal
+                    });
+                    if (res.ok) break;
+                    if (res.status === 429 || res.status >= 500) {
+                        throw new Error(`Status ${res.status}`);
+                    } else {
+                        break; // Other errors (400, 401, etc) shouldn't be retried
+                    }
+                } catch (err) {
+                    if (retryCount < maxRetries) {
+                        retryCount++;
+                        const delay = retryCount * 2000;
+                        console.warn(`${provider} error, retrying in ${delay}ms... (Attempt ${retryCount}/${maxRetries})`);
+                        await new Promise(r => setTimeout(r, delay));
+                    } else {
+                        throw err;
+                    }
+                }
+            }
 
             if (!res.ok) throw new Error(`${provider} Error ${res.status}`);
             const data = await res.json();
