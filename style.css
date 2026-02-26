@@ -214,6 +214,16 @@ body {
 .toggle-pill input { cursor: pointer; accent-color: var(--accent); }
 .toggle-pill input:checked + span { color: var(--accent); }
 
+.pill-btn {
+    background: var(--bg-card); border: 1px solid var(--border);
+    color: var(--text-secondary); border-radius: 8px; padding: 6px 14px;
+    font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center;
+}
+.pill-btn:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.pill-btn.active { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 8px rgba(99, 102, 241, 0.2); }
+
+
 .input-wrapper {
     background: var(--bg-card); border: 1px solid var(--border);
     border-radius: 12px; padding: 12px 16px;

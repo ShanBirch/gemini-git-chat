@@ -60,6 +60,7 @@ let touchStart = 0;
 let pullDistance = 0;
 const PULL_THRESHOLD = 80;
 let wakeLock = null;
+let notificationsEnabled = false;
 
 // Chat State
 let chats = [];
@@ -118,6 +119,16 @@ function setupEventListeners() {
     });
     planningModeToggle.addEventListener('change', () => {
         setupAI();
+    });
+    const notifyBtn = document.getElementById('notify-toggle-btn');
+    notifyBtn?.addEventListener('click', async () => {
+        const enabled = await requestNotificationPermission();
+        if (enabled) {
+            notifyBtn.classList.add('active');
+            notifyBtn.innerHTML = '<span class="icon">notifications_active</span>';
+        } else {
+            alert("Notification permission denied or not supported.");
+        }
     });
     if (indexRepoBtn) indexRepoBtn.addEventListener('click', () => sbIndexRepo());
 
@@ -336,6 +347,22 @@ async function requestWakeLock() {
 function releaseWakeLock() {
     if (wakeLock) {
         wakeLock.release().then(() => wakeLock = null);
+    }
+}
+
+async function requestNotificationPermission() {
+    if (!("Notification" in window)) return;
+    const permission = await Notification.requestPermission();
+    notificationsEnabled = (permission === "granted");
+    return notificationsEnabled;
+}
+
+function sendCompletionNotification(content) {
+    if (notificationsEnabled && document.visibilityState === 'hidden') {
+        new Notification("✨ GitChat AI Task Complete", {
+            body: content.length > 100 ? content.substring(0, 100) + "..." : content,
+            icon: "/icon.svg"
+        });
     }
 }
 
@@ -1304,6 +1331,10 @@ async function handleSend() {
         releaseWakeLock();
         currentAbortController = null;
         setProcessingState(false);
+        if (aiMsgNode) {
+            const finalContent = aiMsgNode.querySelector('.message-content').innerText;
+            sendCompletionNotification(finalContent);
+        }
         if (queuedMessages.length > 0) handleSend();
     }
 }
@@ -1485,6 +1516,9 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
         loading.remove();
         setProcessingState(false);
         releaseWakeLock();
+        if (aiMsgNode) {
+            sendCompletionNotification(aiMsg.content || "Task finished.");
+        }
     }
 }
 
