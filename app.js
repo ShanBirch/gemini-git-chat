@@ -1149,66 +1149,58 @@ async function handleSend() {
         }
 
         let aiMsgNode = null;
-        let responseFullText = "";
         let toolDepth = 0;
         const MAX_TOOL_DEPTH = 10;
+        let currentParts = parts;
 
-        async function processStream(streamResult) {
-            loadingDiv.remove();
-            if (!aiMsgNode) aiMsgNode = appendMessageOnly('ai', "");
-            const contentNode = aiMsgNode.querySelector('.message-content');
-            
-            for await (const chunk of streamResult.stream) {
-                if (currentAbortController.signal.aborted) break;
-                const chunkText = chunk.text();
-                responseFullText += chunkText;
-                contentNode.innerHTML = marked.parse(responseFullText);
-                scrollToBottom();
+        while (true) {
+            if (currentAbortController.signal.aborted) break;
+            if (toolDepth >= MAX_TOOL_DEPTH) {
+                appendMessageOnly('system', "Maximum tool depth reached. Stopping to prevent loop.");
+                break;
             }
-            
-            const response = await streamResult.response;
+
+            const result = await session.sendMessage(currentParts, { signal: currentAbortController.signal });
+            const response = result.response;
+            const textResponse = response.text();
             const functionCalls = response.functionCalls();
-            
-            if (responseFullText) {
-                addMessageToCurrent('ai', responseFullText);
-                responseFullText = ""; // Reset for next iteration if tools are called
+
+            if (textResponse && textResponse.trim()) {
+                loadingDiv.remove();
+                if (!aiMsgNode) {
+                    aiMsgNode = appendMessageOnly('ai', textResponse);
+                } else {
+                    const contentDiv = aiMsgNode.querySelector('.message-content');
+                    contentDiv.innerHTML += marked.parse(textResponse);
+                }
+                addMessageToCurrent('ai', textResponse);
             }
 
-            if (functionCalls && functionCalls.length > 0) {
-                if (toolDepth >= MAX_TOOL_DEPTH) {
-                    appendMessageOnly('system', "Maximum tool depth reached. Stopping to prevent loop.");
-                    return;
-                }
-                toolDepth++;
+            if (!functionCalls || functionCalls.length === 0) break;
 
-                const toolPromises = functionCalls.map(async (call) => {
-                    if (currentAbortController.signal.aborted) return null;
-                    const toolDiv = appendToolCall(aiMsgNode, call.name, call.args);
-                    const resOutput = toolsMap[call.name] ? await toolsMap[call.name](call.args) : "Error";
-                    markToolSuccess(toolDiv);
-                    
-                    // Context Pruning: If the result is massive (like a full repo map), 
-                    // we tell the AI we've cached it but don't dump the whole 100kb back into the session history
-                    let prunedResult = resOutput;
-                    if (typeof resOutput === 'string' && resOutput.length > 5000) {
-                        prunedResult = `[LARGE CONTENT PRUNED - Output is ${resOutput.length} characters]. I have read this content and it is in my internal context for this turn. Do not re-request unless necessary. Content starts: ${resOutput.substring(0, 500)}...`;
-                    }
-                    
-                    return { functionResponse: { name: call.name, response: { name: call.name, content: prunedResult } } };
-                });
-
-                const toolResults = await Promise.all(toolPromises);
-                const functionResponses = toolResults.filter(r => r !== null);
-
-                if (!currentAbortController.signal.aborted) {
-                    const nextStream = await session.sendMessageStream(functionResponses, { signal: currentAbortController.signal });
-                    await processStream(nextStream);
-                }
+            toolDepth++;
+            loadingDiv.remove();
+            if (!aiMsgNode || !aiMsgNode.classList.contains('ai') || aiMsgNode.innerHTML.includes('thinking')) {
+                aiMsgNode = appendMessageOnly('ai', "Gathering data...");
             }
+
+            const toolPromises = functionCalls.map(async (call) => {
+                if (currentAbortController.signal.aborted) return null;
+                const toolDiv = appendToolCall(aiMsgNode, call.name, call.args);
+                const resOutput = toolsMap[call.name] ? await toolsMap[call.name](call.args) : "Error";
+                markToolSuccess(toolDiv);
+
+                let prunedResult = resOutput;
+                if (typeof resOutput === 'string' && resOutput.length > 5000) {
+                    prunedResult = `[LARGE CONTENT PRUNED - Output is ${resOutput.length} characters]. I have read this content and it is in my internal context. Content starts: ${resOutput.substring(0, 500)}...`;
+                }
+
+                return { functionResponse: { name: call.name, response: { name: call.name, content: prunedResult } } };
+            });
+
+            const toolResults = await Promise.all(toolPromises);
+            currentParts = toolResults.filter(r => r !== null);
         }
-
-        const streamResult = await session.sendMessageStream(parts, { signal: currentAbortController.signal });
-        await processStream(streamResult);
 
     } catch (e) {
         loadingDiv.remove();
