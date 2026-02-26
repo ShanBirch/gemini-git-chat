@@ -15,7 +15,8 @@ exports.handler = async (event, context) => {
             GEMINI_API_KEY: process.env.GEMINI_API_KEY,
             GITHUB_TOKEN: process.env.GITHUB_TOKEN,
             SUPABASE_URL: process.env.SUPABASE_URL,
-            SUPABASE_KEY: process.env.SUPABASE_KEY
+            SUPABASE_KEY: process.env.SUPABASE_KEY,
+            PRODUCTION_URL: process.env.PRODUCTION_URL
         })
     };
 };

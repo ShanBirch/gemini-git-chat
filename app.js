@@ -820,8 +820,11 @@ async function sbRecallMemories(query) {
 
 // --- Lighthouse Audits (PageSpeed Insights API) ---
 async function ghRunLighthouse() {
-    const url = productionUrlInput.value.trim();
+    let url = productionUrlInput.value.trim();
     if (!url) return "Error: No Production/Netlify URL configured in settings.";
+    
+    // Ensure protocol exists
+    if (!url.startsWith('http')) url = 'https://' + url;
     
     try {
         const apiEndpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=SEO&category=ACCESSIBILITY&category=BEST_PRACTICES`;
