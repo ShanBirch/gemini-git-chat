@@ -230,7 +230,7 @@ function setupEventListeners() {
         }
     }, { passive: true });
 
-    window.addEventListener('touchend', () => {
+    const handleTouchEnd = () => {
         if (pullDistance >= PULL_THRESHOLD) {
             pullToRefreshEl.querySelector('span').textContent = "Refreshing...";
             // Reset transforms immediately BEFORE reload to avoid sticky state
@@ -242,7 +242,10 @@ function setupEventListeners() {
             appEl.style.transform = `translateY(0)`;
         }
         pullDistance = 0;
-    }, { passive: true });
+    };
+
+    window.addEventListener('touchend', handleTouchEnd, { passive: true });
+    window.addEventListener('touchcancel', handleTouchEnd, { passive: true });
 }
 
 function stopGeneration() {
