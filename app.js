@@ -1011,7 +1011,8 @@ function setupAI() {
     ];
 
     const isPlanning = planningModeToggle.checked;
-    const baseInstruction = `You are GitChat AI, a Senior Autonomous Engineer. 
+    const baseInstruction = `You are GitChat AI, an Elite Autonomous Software Engineer optimizing for speed, accuracy, and decisive action.
+Do not second-guess yourself unnecessarily.
 Repo: '${currentRepo}' | Branch: '${currentBranch}'.`;
 
     const planningInstruction = `${baseInstruction}
@@ -1023,7 +1024,7 @@ CRITICAL: You are currently in PLANNING MODE.
 5. If the user says "Go", "Approve", or similar, then you may begin using write/patch tools.`;
 
     const executionInstruction = `${baseInstruction}
-- GOAL: Operate with high precision and speed.
+- AVOID TOOL LOOPS: If you cannot find what you want after a few searches, STOP and ask the user. DO NOT repeat the exact same tool calls in an endless loop.
 - VISION MODE: If an image is provided, you are a Vision-to-Code Expert. Analyze pixels (padding, colors, layout) and map them to CSS selectors or HTML structure. Use 'semantic_search' to find the relevant style files.
 - MEMORY: Use 'recall_memories' at the start of complex tasks to remember user preferences. Use 'remember_this' if the user gives important project rules.
 - PATCHING: Prefer 'patch_file' over 'write_file' for existing files.
@@ -1200,6 +1201,7 @@ async function handleSend() {
         let toolDepth = 0;
         const MAX_TOOL_DEPTH = 60;
         let currentParts = parts;
+        let toolHistory = new Set();
 
         while (true) {
             if (currentAbortController.signal.aborted) break;
@@ -1235,7 +1237,17 @@ async function handleSend() {
             const toolPromises = functionCalls.map(async (call) => {
                 if (currentAbortController.signal.aborted) return null;
                 const toolDiv = appendToolCall(aiMsgNode, call.name, call.args);
-                const resOutput = toolsMap[call.name] ? await toolsMap[call.name](call.args) : "Error";
+                
+                const callSignature = `${call.name}-${JSON.stringify(call.args)}`;
+                let resOutput;
+                
+                if (call.name !== 'get_build_status' && toolHistory.has(callSignature)) {
+                    resOutput = "SYSTEM WARNING: You have already called this exact tool with identical arguments recently. You are stuck in a loop. Try a different approach, view a different file, or stop and ask the user.";
+                } else {
+                    toolHistory.add(callSignature);
+                    resOutput = toolsMap[call.name] ? await toolsMap[call.name](call.args) : "Error";
+                }
+                
                 markToolSuccess(toolDiv);
 
                 let prunedResult = resOutput;
@@ -1311,9 +1323,10 @@ async function callOpenAICompatibleModel(provider, model, message, image, loadin
     
     const messages = [];
     // Add system instruction
-    messages.push({ role: 'system', content: `You are GitChat AI, an expert autonomous software engineer. 
+    messages.push({ role: 'system', content: `You are GitChat AI, an Elite Autonomous Software Engineer optimizing for speed, accuracy, and decisive action. 
 You have direct access to the user\'s GitHub repository \'${currentRepo}\' on branch \'${currentBranch}\'. 
 Use tools to read/write files and explain your actions. 
+CRITICAL: Avoid getting stuck in tool loops. If a search fails repeatedly, stop and ask the user.
 CRITICAL: When updating code, ensure you provide the FULL content of the file to 'write_file'. Use 'view_file' with 'start_line' and 'end_line' instead of reading whole files if they are large.` });
 
     // Add history
@@ -1343,6 +1356,7 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
     ];
 
     try {
+        let toolHistory = new Set();
         while(true) {
             if (currentAbortController.signal.aborted) break;
             
@@ -1372,8 +1386,20 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
             if (!aiMsgNode || !aiMsgNode.classList.contains('ai')) aiMsgNode = appendMessageOnly('ai', "(Analyzing repository...)");
 
             const toolPromises = aiMsg.tool_calls.map(async (call) => {
-                const toolDiv = appendToolCall(aiMsgNode, call.function.name, JSON.parse(call.function.arguments));
-                const output = toolsMap[call.function.name] ? await toolsMap[call.function.name](JSON.parse(call.function.arguments)) : "Error";
+                const toolName = call.function.name;
+                const toolArgs = call.function.arguments;
+                const toolDiv = appendToolCall(aiMsgNode, toolName, JSON.parse(toolArgs));
+                
+                const callSignature = `${toolName}-${toolArgs}`;
+                let output;
+                
+                if (toolName !== 'get_build_status' && toolHistory.has(callSignature)) {
+                    output = "SYSTEM WARNING: You have already called this exact tool with identical arguments recently. You are stuck in a loop. Try a different approach or stop and ask the user.";
+                } else {
+                    toolHistory.add(callSignature);
+                    output = toolsMap[toolName] ? await toolsMap[toolName](JSON.parse(toolArgs)) : "Error";
+                }
+                
                 markToolSuccess(toolDiv);
                 
                 const prunedOutput = typeof output === 'string' && output.length > 5000 
