@@ -61,6 +61,7 @@ let wakeLock = null;
 // Chat State
 let chats = [];
 let currentChatId = null;
+const fileCache = new Map();
 let chatSessions = {};
 
 // Initialize
@@ -602,11 +603,13 @@ async function ghListFiles(path = "") {
         if (!res.ok) throw new Error(`${res.status}`);
         const data = await res.json();
         if (!Array.isArray(data)) return `Path '${path}' is a file.`;
-        return data.map(item => `${item.type === 'dir' ? '📁' : '📄'} ${item.path}`).join('\n') || "Empty directory.";
+        const result = data.map(item => `${item.type === 'dir' ? '📁' : '📄'} ${item.path}`).join('\n') || "Empty directory.";
+        return result;
     } catch (e) { return `Error: ${e.message}`; }
 }
 
 async function ghReadFile(path) {
+    if (fileCache.has(path)) return fileCache.get(path);
     try {
         const url = `https://api.github.com/repos/${currentRepo}/contents/${path}?ref=${currentBranch}`;
         const res = await fetch(url, { headers: githubHeaders });
@@ -616,8 +619,69 @@ async function ghReadFile(path) {
         const binaryString = atob(data.content.replace(/\s/g, ''));
         const bytes = new Uint8Array(binaryString.length);
         for (let i=0; i<binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-        return new TextDecoder('utf-8').decode(bytes);
+        const content = new TextDecoder('utf-8').decode(bytes);
+        fileCache.set(path, content);
+        return content;
     } catch (e) { return `Error: ${e.message}`; }
+}
+
+async function ghGetRepoMap(forceRefresh = false) {
+    const cacheKey = `gitchat_map_${currentRepo}_${currentBranch}`;
+    if (!forceRefresh) {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) return cached;
+    }
+
+    try {
+        const url = `https://api.github.com/repos/${currentRepo}/git/trees/${currentBranch}?recursive=1`;
+        const res = await fetch(url, { headers: githubHeaders });
+        if (!res.ok) throw new Error(`${res.status}`);
+        const data = await res.json();
+        const map = data.tree
+            .map(item => `${item.type === 'tree' ? '📁' : '📄'} ${item.path}`)
+            .join('\n') || "Empty repository.";
+        
+        try { localStorage.setItem(cacheKey, map); } catch(e) { console.warn("Repo map too large for localStorage"); }
+        return map;
+    } catch (e) { return `Error: ${e.message}`; }
+}
+
+async function ghSearchCode(query) {
+    try {
+        const url = `https://api.github.com/search/code?q=${encodeURIComponent(query)}+repo:${currentRepo}`;
+        const res = await fetch(url, { headers: githubHeaders });
+        if (!res.ok) throw new Error(`${res.status}`);
+        const data = await res.json();
+        if (data.items.length === 0) return "No results found.";
+        return data.items.slice(0, 15).map(item => `📄 ${item.path}`).join('\n');
+    } catch (e) { return `Error: ${e.message}`; }
+}
+
+async function ghPatchFile(path, search, replace, commit_message) {
+    try {
+        const original = await ghReadFile(path);
+        if (original.startsWith("Error:")) return original;
+        
+        if (!original.includes(search)) {
+            return `Error: Did not find the exact 'search' text in ${path}. Please ensure whitespace/indentation are identical to what you read.`;
+        }
+        
+        const updated = original.replace(search, replace);
+        return await ghWriteFile(path, updated, commit_message || `Patch ${path}`);
+    } catch (e) { return `Error patching: ${e.message}`; }
+}
+
+async function ghGetBuildStatus() {
+    if (!githubHeaders || !currentRepo) return "Not connected.";
+    try {
+        const res = await fetch(`https://api.github.com/repos/${currentRepo}/commits/${currentBranch}/check-runs`, { headers: githubHeaders });
+        if (!res.ok) throw new Error(`${res.status}`);
+        const data = await res.json();
+        if (data.check_runs.length === 0) return "No active build/CI checks.";
+        return data.check_runs.map(run => 
+            `🛠️ ${run.name}: ${run.status} (${run.conclusion || 'pending'})\nSummary: ${run.output?.summary || 'No output'}`
+        ).join('\n---\n');
+    } catch (e) { return `Error fetching build status: ${e.message}`; }
 }
 
 async function ghWriteFile(path, content, commit_message) {
@@ -664,7 +728,21 @@ async function ghWriteFile(path, content, commit_message) {
     }
 }
 
-const toolsMap = { list_files: (args) => ghListFiles(args.path || ""), read_file: (args) => ghReadFile(args.path), write_file: (args) => ghWriteFile(args.path, args.content, args.commit_message) };
+const toolsMap = { 
+    list_files: (args) => ghListFiles(args.path || ""), 
+    read_file: (args) => ghReadFile(args.path), 
+    write_file: (args) => {
+        fileCache.delete(args.path); // Bust cache on write
+        return ghWriteFile(args.path, args.content, args.commit_message);
+    },
+    patch_file: (args) => {
+        fileCache.delete(args.path); // Bust cache on write
+        return ghPatchFile(args.path, args.search, args.replace, args.commit_message);
+    },
+    get_repo_map: () => ghGetRepoMap(),
+    search_code: (args) => ghSearchCode(args.query),
+    get_build_status: () => ghGetBuildStatus()
+};
 
 function mapModelName(name) {
     if (!name) return "gemini-3-flash";
@@ -713,17 +791,21 @@ function setupAI() {
         safetySettings,
         tools: [{
             functionDeclarations: [
-                { name: "list_files", description: "List files in a directory of the standard connected GitHub repository.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } } } },
-                { name: "read_file", description: "Read the full content of a specific file from the repository.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
-                { name: "write_file", description: "Update or create a file in the repository.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } }
+                { name: "get_repo_map", description: "Get the entire repository structure recursively. Use this first for large repos." },
+                { name: "search_code", description: "Search for strings/symbols across all files.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
+                { name: "patch_file", description: "Surgical update. Provide a block of code to search for and what to replace it with. Much faster than write_file for large files.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
+                { name: "read_file", description: "Read a file. Results are cached per session.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
+                { name: "write_file", description: "Full file overwrite. Use patch_file instead if making small changes.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
+                { name: "get_build_status", description: "Check current GitHub Actions/Netlify build status and error logs." }
             ]
         }],
-        systemInstruction: `You are GitChat AI, an expert autonomous software engineer. 
-Your current model is ${modelName}. 
-You have direct access to the user\'s GitHub repository \'${currentRepo}\' on branch \'${currentBranch}\'. 
-Use tools to read/write files and explain your actions. 
-CRITICAL: When updating code, ensure you provide the FULL content of the file to \'write_file\'. 
-If a tool fails, read the error message carefully and explain the exact GitHub error to the user.`
+        systemInstruction: `You are GitChat AI, a Senior Autonomous Engineer. 
+Repo: '${currentRepo}' | Branch: '${currentBranch}'.
+- GOAL: Operate with high precision and speed.
+- PATCHING: Prefer 'patch_file' over 'write_file' for existing files—it is 10x faster and safer.
+- BUILD LOOP: If you push code, check 'get_build_status' after 30-60s. If it fails, READ the logs and fix it immediately without being asked.
+- EXPLORATION: Start with 'get_repo_map' to see everything.
+- CACHING: You don't need to re-read files you've already seen this session.`
     });
 }
 
@@ -814,7 +896,6 @@ async function handleSend() {
     }
 
     if (isProcessing) {
-        // Queue the message, print to UI, and interrupt current flow
         queuedMessages.push(text);
         appendMessageOnly('user', text);
         addMessageToCurrent('user', text);
@@ -824,7 +905,6 @@ async function handleSend() {
         return;
     }
 
-    // Processing start
     setProcessingState(true);
     requestWakeLock();
     let messageToSend = text;
@@ -833,7 +913,6 @@ async function handleSend() {
     if (text || currentAttachedImage) {
         appendMessageOnly('user', text);
         addMessageToCurrent('user', text);
-        // Clear preview immediately
         currentAttachedImage = null;
         imagePreviewContainer.style.display = 'none';
         imageInput.value = '';
@@ -866,52 +945,73 @@ async function handleSend() {
     try {
         const parts = [{ text: messageToSend }];
         if (imageDataToSend) {
-            parts.unshift({
-                inlineData: {
-                    mimeType: imageDataToSend.mimeType,
-                    data: imageDataToSend.data
-                }
-            });
+            parts.unshift({ inlineData: { mimeType: imageDataToSend.mimeType, data: imageDataToSend.data } });
         }
 
-        let result = await session.sendMessage(parts, { signal: currentAbortController.signal });
+        let result = await session.sendMessageStream(parts, { signal: currentAbortController.signal });
         let fullResponseText = "";
-        
+        let aiMsgNode = null;
+
         while (true) {
             if (currentAbortController.signal.aborted) break;
 
-            const response = result.response;
+            // Stream handler
+            for await (const chunk of result.stream) {
+                if (currentAbortController.signal.aborted) break;
+                loadingDiv.remove();
+                
+                const chunkText = chunk.text();
+                fullResponseText += chunkText;
+                
+                if (!aiMsgNode) aiMsgNode = appendMessageOnly('ai', "");
+                const contentDiv = aiMsgNode.querySelector('.message-content');
+                contentDiv.innerHTML = marked.parse(fullResponseText);
+                
+                // Speculative Pre-fetch: Look for potential filenames in the stream
+                const fileMatches = chunkText.match(/[a-zA-Z0-9_\-\.\/]+\.(js|py|html|css|json|md|txt|ts|jsx|tsx)/g);
+                if (fileMatches) {
+                    fileMatches.forEach(path => {
+                        if (!fileCache.has(path) && path.length > 4) {
+                            console.log("🚀 Speculative pre-fetch:", path);
+                            ghReadFile(path); // Fire and forget into cache
+                        }
+                    });
+                }
+                
+                scrollToBottom();
+            }
+
+            const response = await result.response;
             const functionCalls = response.functionCalls();
-            if (response.text() && response.text().trim() !== "") fullResponseText += response.text() + "\n";
+            
             if (!functionCalls || functionCalls.length === 0) break;
             
-            loadingDiv.remove();
-            let aiMsgNode = chatHistory.lastElementChild;
-            if (!aiMsgNode || !aiMsgNode.classList.contains('ai') || aiMsgNode.innerHTML.includes('Thinking')) {
-                 aiMsgNode = appendMessageOnly('ai', fullResponseText || "Analyzing repository...");
-            }
+            if (!aiMsgNode) aiMsgNode = appendMessageOnly('ai', "Gathering data...");
             
-            const functionResponses = [];
-
-            for (const call of functionCalls) {
-                if (currentAbortController.signal.aborted) break;
+            const toolPromises = functionCalls.map(async (call) => {
+                if (currentAbortController.signal.aborted) return null;
                 const toolDiv = appendToolCall(aiMsgNode, call.name, call.args);
                 const resOutput = toolsMap[call.name] ? await toolsMap[call.name](call.args) : "Error";
                 markToolSuccess(toolDiv);
-                functionResponses.push({ functionResponse: { name: call.name, response: { name: call.name, content: resOutput } } });
-            }
+                return { functionResponse: { name: call.name, response: { name: call.name, content: resOutput } } };
+            });
+
+            const toolResults = await Promise.all(toolPromises);
+            const functionResponses = toolResults.filter(r => r !== null);
 
             if (currentAbortController.signal.aborted) break;
 
             chatHistory.appendChild(loadingDiv);
-            result = await session.sendMessage(functionResponses, { signal: currentAbortController.signal });
+            result = await session.sendMessageStream(functionResponses, { signal: currentAbortController.signal });
             fullResponseText = ""; 
+            aiMsgNode = null; // Reset for next stream part
         }
 
         loadingDiv.remove();
         if (fullResponseText && !currentAbortController.signal.aborted) {
-            appendMessageOnly('ai', fullResponseText);
             addMessageToCurrent('ai', fullResponseText);
+            // Ensure final highlight
+            if (aiMsgNode) aiMsgNode.querySelectorAll('pre code').forEach(b => Prism.highlightElement(b));
         }
 
     } catch (e) {
@@ -920,21 +1020,13 @@ async function handleSend() {
             appendMessageOnly('system', 'Generation stopped.');
         } else {
             console.error("Full AI Error:", e);
-            let userMsg = e.message;
-            if (e.message.includes("404")) {
-                const currentModelName = currentAiModel?.model || "unknown";
-                userMsg = `Model Not Found (404): The ID "${currentModelName}" is not available for your key or region. \n\nTip: Google rolls out Gemini 3.1 gradually. Try switching to "Gemini 2.0 Flash" or "Gemini 1.5 Flash" in the bottom menu.`;
-            }
-            appendMessageOnly('ai', userMsg);
+            appendMessageOnly('ai', e.message);
         }
     } finally {
         releaseWakeLock();
         currentAbortController = null;
         setProcessingState(false);
-        chatInput.focus();
-        if (queuedMessages.length > 0) {
-            handleSend(); // Trigger next queue if any
-        }
+        if (queuedMessages.length > 0) handleSend();
     }
 }
 
@@ -1000,9 +1092,12 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
     messages.push({ role: 'user', content: message });
     
     const tools = [
-        { type: "function", function: { name: "list_files", description: "List files in a directory", parameters: { type: "object", properties: { path: { type: "string" } } } } },
+        { type: "function", function: { name: "get_repo_map", description: "Get the recursive file tree." } },
+        { type: "function", function: { name: "patch_file", description: "Surgical block-replacement.", parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "search", "replace"] } } },
+        { type: "function", function: { name: "get_build_status", description: "Check CI/Build logs." } },
+        { type: "function", function: { name: "search_code", description: "Search for specific code strings across the repo.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "read_file", description: "Read file content", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
-        { type: "function", function: { name: "write_file", description: "Write file content", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
+        { type: "function", function: { name: "write_file", description: "Full file overwrite.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
     ];
 
     try {
@@ -1034,12 +1129,15 @@ CRITICAL: When updating code, ensure you provide the FULL content of the file to
             let aiMsgNode = chatHistory.lastElementChild;
             if (!aiMsgNode || !aiMsgNode.classList.contains('ai')) aiMsgNode = appendMessageOnly('ai', "(Analyzing repository...)");
 
-            for (const call of aiMsg.tool_calls) {
+            const toolPromises = aiMsg.tool_calls.map(async (call) => {
                 const toolDiv = appendToolCall(aiMsgNode, call.function.name, JSON.parse(call.function.arguments));
                 const output = toolsMap[call.function.name] ? await toolsMap[call.function.name](JSON.parse(call.function.arguments)) : "Error";
                 markToolSuccess(toolDiv);
-                messages.push({ role: 'tool', tool_call_id: call.id, content: output });
-            }
+                return { role: 'tool', tool_call_id: call.id, content: output };
+            });
+
+            const toolResults = await Promise.all(toolPromises);
+            messages.push(...toolResults);
             
             chatHistory.appendChild(loading);
         }
