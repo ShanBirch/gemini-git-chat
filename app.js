@@ -25,6 +25,7 @@ const supabaseKeyInput = document.getElementById('supabase-key');
 const enableSyncBtn = document.getElementById('enable-sync');
 const deepseekKeyInput = document.getElementById('deepseek-key');
 const minimaxKeyInput = document.getElementById('minimax-key');
+const planningModeToggle = document.getElementById('planning-mode-toggle');
 
 // Mobile and Tabs
 const sidebar = document.getElementById('sidebar');
@@ -112,6 +113,9 @@ function setupEventListeners() {
             delete chatSessions[currentChatId];
             setupAI(); // Re-initialize with new model
         }
+    });
+    planningModeToggle.addEventListener('change', () => {
+        setupAI();
     });
 
     attachBtn.addEventListener('click', (e) => {
@@ -786,26 +790,39 @@ function setupAI() {
         { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
     ];
 
+    const isPlanning = planningModeToggle.checked;
+    const baseInstruction = `You are GitChat AI, a Senior Autonomous Engineer. 
+Repo: '${currentRepo}' | Branch: '${currentBranch}'.`;
+
+    const planningInstruction = `${baseInstruction}
+CRITICAL: You are currently in PLANNING MODE.
+1. DO NOT use 'write_file' or 'patch_file' yet.
+2. Use 'get_repo_map', 'search_code', and 'read_file' to explore the codebase.
+3. Propose a detailed step-by-step PLAN of which files you will touch and exactly what changes you will make.
+4. Output your plan as a checklist and wait for user approval.
+5. If the user says "Go", "Approve", or similar, then you may begin using write/patch tools.`;
+
+    const executionInstruction = `${baseInstruction}
+- GOAL: Operate with high precision and speed.
+- PATCHING: Prefer 'patch_file' over 'write_file' for existing files—it is 10x faster and safer.
+- BUILD LOOP: If you push code, check 'get_build_status' after 30-60s. If it fails, READ the logs and fix it immediately.
+- EXPLORATION: Use 'get_repo_map' for context.
+- CACHING: Do not re-read files you already have in cache.`;
+
     currentAiModel = genAI.getGenerativeModel({ 
         model: modelName, 
         safetySettings,
         tools: [{
             functionDeclarations: [
-                { name: "get_repo_map", description: "Get the entire repository structure recursively. Use this first for large repos." },
+                { name: "get_repo_map", description: "Get the entire repository structure recursively." },
                 { name: "search_code", description: "Search for strings/symbols across all files.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
-                { name: "patch_file", description: "Surgical update. Provide a block of code to search for and what to replace it with. Much faster than write_file for large files.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
-                { name: "read_file", description: "Read a file. Results are cached per session.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
-                { name: "write_file", description: "Full file overwrite. Use patch_file instead if making small changes.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
-                { name: "get_build_status", description: "Check current GitHub Actions/Netlify build status and error logs." }
+                { name: "patch_file", description: "Surgical update block.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
+                { name: "read_file", description: "Read a file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
+                { name: "write_file", description: "Full file overwrite.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
+                { name: "get_build_status", description: "Check CI/Build logs." }
             ]
         }],
-        systemInstruction: `You are GitChat AI, a Senior Autonomous Engineer. 
-Repo: '${currentRepo}' | Branch: '${currentBranch}'.
-- GOAL: Operate with high precision and speed.
-- PATCHING: Prefer 'patch_file' over 'write_file' for existing files—it is 10x faster and safer.
-- BUILD LOOP: If you push code, check 'get_build_status' after 30-60s. If it fails, READ the logs and fix it immediately without being asked.
-- EXPLORATION: Start with 'get_repo_map' to see everything.
-- CACHING: You don't need to re-read files you've already seen this session.`
+        systemInstruction: isPlanning ? planningInstruction : executionInstruction
     });
 }
 

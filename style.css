@@ -204,6 +204,16 @@ body {
 }
 .model-pill:hover { background: rgba(255,255,255,0.05); color: #fff; }
 
+.toggle-pill {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    color: var(--text-secondary); border-radius: 8px; padding: 6px 14px;
+    font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;
+}
+.toggle-pill:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.toggle-pill input { cursor: pointer; accent-color: var(--accent); }
+.toggle-pill input:checked + span { color: var(--accent); }
+
 .input-wrapper {
     background: var(--bg-card); border: 1px solid var(--border);
     border-radius: 12px; padding: 12px 16px;
