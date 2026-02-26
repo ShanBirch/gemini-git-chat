@@ -1018,6 +1018,7 @@ function setupAI() {
     const isPlanning = planningModeToggle.checked;
     const baseInstruction = `You are GitChat AI, an Elite Autonomous Software Engineer optimizing for speed, accuracy, and decisive action.
 Do not second-guess yourself unnecessarily.
+CRITICAL: When you perform a "System Upgrade" (improving GitChat's own code), increment the version number in 'index.html' (e.g. from v1.3.0 to v1.4.0).
 Repo: '${currentRepo}' | Branch: '${currentBranch}'.`;
 
     const planningInstruction = `${baseInstruction}
@@ -1330,11 +1331,11 @@ async function callOpenAICompatibleModel(provider, model, message, image, loadin
     const chat = chats.find(c => c.id === currentChatId);
     
     const messages = [];
-    // Add system instruction
     messages.push({ role: 'system', content: `You are GitChat AI, an Elite Autonomous Software Engineer optimizing for speed, accuracy, and decisive action. 
 You have direct access to the user\'s GitHub repository \'${currentRepo}\' on branch \'${currentBranch}\'. 
 Use tools to read/write files and explain your actions. 
 CRITICAL: Avoid getting stuck in tool loops. If a search fails repeatedly, stop and ask the user.
+CRITICAL: When you perform a "System Upgrade" (improving GitChat's own code), increment the version number in 'index.html'.
 CRITICAL: You have a 60-turn tool budget. Be efficient.
 CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_file' for exploration.` });
 
