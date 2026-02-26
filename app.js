@@ -1065,11 +1065,9 @@ CRITICAL: You are currently in PLANNING MODE.
 - OPTIMIZATION: Use 'run_lighthouse' to check performance/SEO of the live site. If performance is low, optimize images or CSS.
 - SEMANTIC SEARCH: Use 'semantic_search' to find logic across the repo by intent.
 - EXPLORATION: Use 'get_repo_map' for context.
-- VIEWING FILES: DO NOT read the whole file if it's large. Use 'view_file' (max 500 lines) or 'grep_search' to explore efficiently.
-- BIAS FOR ACTION: Your goal is to SHIP CODE. 
-- STOP SEARCHING: If you have made more than 7 search/read calls without writing code, you are failing. Summarize your current hypothesis and ask for guidance.
-- ACTION THRESHOLD: As soon as you find a relevant file, forming a hypothesis and test it with 'patch_file'. Do not try to understand the entire repository first.
-- MINDSET: You are a Pragmatic Senior Engineer on a tight deadline. Favor aggressive progress over perfect information.
+- PROACTIVE HYPOTHESIS: Do not wait for 100% certainty. Form a hypothesis early and use 'patch_file' to test it. Failing fast is better than over-searching.
+- TURN BUDGET (100 Turns): You have a huge budget, but after turn 15 of pure exploration, you MUST switch to execution mode.
+- ANTI-GRAVITY MINDSET: Act like a senior dev with 5 minutes before a production deploy. Use 'get_repo_map' once, pick the most likely file, and fix it. 
 - CACHING: Do not re-read files you already have in cache.`;
 
     currentAiModel = genAI.getGenerativeModel({ 
@@ -1248,6 +1246,10 @@ async function handleSend() {
                 break;
             }
 
+            if (toolDepth === 15 && !hasEditted) {
+                currentParts.push({ text: "SYSTEM NUDGE: You are over-exploring. You have gathered enough data. Form a hypothesis NOW and use 'patch_file' or 'write_file'. Do not make another search call." });
+            }
+
             let result, response;
             let retryCount = 0;
             const maxRetries = 3;
@@ -1302,6 +1304,7 @@ async function handleSend() {
                     resOutput = "SYSTEM WARNING: You have already called this exact tool with identical arguments recently. You are stuck in a loop. Try a different approach, view a different file, or stop and ask the user.";
                 } else {
                     toolHistory.add(callSignature);
+                    if (call.name === 'write_file' || call.name === 'patch_file') hasEditted = true;
                     resOutput = toolsMap[call.name] ? await toolsMap[call.name](call.args) : "Error";
                 }
                 
@@ -1421,7 +1424,9 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
     try {
         let toolHistory = new Set();
         let toolDepth = 0;
-        const MAX_TOOL_DEPTH = 60;
+        const MAX_TOOL_DEPTH = 100;
+        let hasEditted = false;
+        let aiMsgNode = null;
 
         while(true) {
             if (currentAbortController.signal.aborted) break;
@@ -1429,7 +1434,10 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
                 appendMessageOnly('system', "Maximum tool depth reached. Stopping to prevent loop.");
                 break;
             }
-            
+
+            if (toolDepth === 15 && !hasEditted) {
+                messages.push({ role: 'system', content: "SYSTEM NUDGE: You are over-exploring. You have gathered enough data. Form a hypothesis NOW and use 'patch_file' or 'write_file'. Do not make another search call." });
+            }
             
             let res;
             let retryCount = 0;
@@ -1447,7 +1455,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
                     if (res.status === 429 || res.status >= 500) {
                         throw new Error(`Status ${res.status}`);
                     } else {
-                        break; // Other errors (400, 401, etc) shouldn't be retried
+                        break;
                     }
                 } catch (err) {
                     if (retryCount < maxRetries) {
@@ -1476,7 +1484,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
             if (!aiMsg.tool_calls || aiMsg.tool_calls.length === 0) break;
 
             loading.remove();
-            let aiMsgNode = chatHistory.lastElementChild;
+            aiMsgNode = chatHistory.lastElementChild;
             if (!aiMsgNode || !aiMsgNode.classList.contains('ai')) aiMsgNode = appendMessageOnly('ai', "(Analyzing repository...)");
 
             const toolPromises = aiMsg.tool_calls.map(async (call) => {
@@ -1491,6 +1499,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
                     output = "SYSTEM WARNING: You have already called this exact tool with identical arguments recently. You are stuck in a loop. Try a different approach or stop and ask the user.";
                 } else {
                     toolHistory.add(callSignature);
+                    if (toolName === 'write_file' || toolName === 'patch_file') hasEditted = true;
                     output = toolsMap[toolName] ? await toolsMap[toolName](JSON.parse(toolArgs)) : "Error";
                 }
                 
@@ -1517,7 +1526,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
         setProcessingState(false);
         releaseWakeLock();
         if (aiMsgNode) {
-            sendCompletionNotification(aiMsg.content || "Task finished.");
+            sendCompletionNotification("Task finished.");
         }
     }
 }
