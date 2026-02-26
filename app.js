@@ -1039,8 +1039,9 @@ CRITICAL: You are currently in PLANNING MODE.
 - SEMANTIC SEARCH: Use 'semantic_search' to find logic across the repo by intent.
 - EXPLORATION: Use 'get_repo_map' for context.
 - VIEWING FILES: DO NOT read the whole file if it's large. Use 'view_file' (max 500 lines) or 'grep_search' to explore efficiently.
-- SYSTEM BUDGET: You have a limit of 60 tool calls per message cycle. Use them wisely.
-- MINDSET: You are an Elite Engineer. Write clean, modular, and well-documented code. Favor speed but NEVR at the expense of correctness.
+- DIMINISHING RETURNS: If you have made more than 15 search/read calls without finding a clear path to action, STOP. Summarize what you found and ask for guidance.
+- ACTION THRESHOLD: As soon as you have identified the primary file(s) and the logic to change, PROCEED to the solution. Do not search for "every possible edge case" across the whole repo.
+- MINDSET: You are an Elite Engineer. Write clean, modular, and well-documented code. Favor speed but NEVER at the expense of correctness.
 - CACHING: Do not re-read files you already have in cache.`;
 
     currentAiModel = genAI.getGenerativeModel({ 
@@ -1336,6 +1337,7 @@ You have direct access to the user\'s GitHub repository \'${currentRepo}\' on br
 Use tools to read/write files and explain your actions. 
 CRITICAL: Avoid getting stuck in tool loops. If a search fails repeatedly, stop and ask the user.
 CRITICAL: When you perform a "System Upgrade" (improving GitChat's own code), increment the version number in 'index.html'.
+CRITICAL: ACTION THRESHOLD. Once you have enough data to form a solution, STOP searching and START coding. Do not over-analyze.
 CRITICAL: You have a 60-turn tool budget. Be efficient.
 CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_file' for exploration.` });
 
