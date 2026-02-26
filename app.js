@@ -1247,10 +1247,6 @@ async function handleSend() {
                 break;
             }
 
-            if (toolDepth === 15 && !hasEditted) {
-                currentParts.push({ text: "SYSTEM NUDGE: You are over-exploring. You have gathered enough data. Form a hypothesis NOW and use 'patch_file' or 'write_file'. Do not make another search call." });
-            }
-
             let result, response;
             let retryCount = 0;
             const maxRetries = 3;
@@ -1294,7 +1290,7 @@ async function handleSend() {
                 aiMsgNode = appendMessageOnly('ai', "Gathering data...");
             }
 
-            const toolPromises = functionCalls.map(async (call) => {
+            const toolPromises = functionCalls.map(async (call, index) => {
                 if (currentAbortController.signal.aborted) return null;
                 const toolDiv = appendToolCall(aiMsgNode, call.name, call.args);
                 
@@ -1314,6 +1310,10 @@ async function handleSend() {
                 let prunedResult = resOutput;
                 if (typeof resOutput === 'string' && resOutput.length > 5000) {
                     prunedResult = `[LARGE CONTENT PRUNED - Output is ${resOutput.length} characters]. I have read this content and it is in my internal context. Content starts: ${resOutput.substring(0, 500)}...`;
+                }
+                
+                if (toolDepth === 15 && !hasEditted && index === 0) {
+                    prunedResult += "\n\nSYSTEM NUDGE: You are over-exploring. You have gathered enough data. Form a hypothesis NOW and use 'patch_file' or 'write_file'. Do not make another search call.";
                 }
 
                 return { functionResponse: { name: call.name, response: { name: call.name, content: prunedResult } } };
@@ -1436,10 +1436,6 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
                 break;
             }
 
-            if (toolDepth === 15 && !hasEditted) {
-                messages.push({ role: 'system', content: "SYSTEM NUDGE: You are over-exploring. You have gathered enough data. Form a hypothesis NOW and use 'patch_file' or 'write_file'. Do not make another search call." });
-            }
-            
             let res;
             let retryCount = 0;
             const maxRetries = 3;
@@ -1488,7 +1484,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
             aiMsgNode = chatHistory.lastElementChild;
             if (!aiMsgNode || !aiMsgNode.classList.contains('ai')) aiMsgNode = appendMessageOnly('ai', "(Analyzing repository...)");
 
-            const toolPromises = aiMsg.tool_calls.map(async (call) => {
+            const toolPromises = aiMsg.tool_calls.map(async (call, index) => {
                 const toolName = call.function.name;
                 const toolArgs = call.function.arguments;
                 const toolDiv = appendToolCall(aiMsgNode, toolName, JSON.parse(toolArgs));
@@ -1509,8 +1505,13 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
                 const prunedOutput = typeof output === 'string' && output.length > 5000 
                     ? `[LARGE CONTENT PRUNED - ${output.length} characters]. Partial view: ${output.substring(0, 500)}...` 
                     : output;
+                
+                let finalContent = prunedOutput;
+                if (toolDepth === 15 && !hasEditted && index === 0) {
+                    finalContent += "\n\nSYSTEM NUDGE: You are over-exploring. You have gathered enough data. Form a hypothesis NOW and use 'patch_file' or 'write_file'. Do not make another search call.";
+                }
                     
-                return { role: 'tool', tool_call_id: call.id, content: prunedOutput };
+                return { role: 'tool', tool_call_id: call.id, content: finalContent };
             });
 
             const toolResults = await Promise.all(toolPromises);
