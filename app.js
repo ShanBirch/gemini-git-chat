@@ -948,45 +948,30 @@ async function handleSend() {
             parts.unshift({ inlineData: { mimeType: imageDataToSend.mimeType, data: imageDataToSend.data } });
         }
 
-        let result = await session.sendMessageStream(parts, { signal: currentAbortController.signal });
+        let result = await session.sendMessage(parts, { signal: currentAbortController.signal });
         let fullResponseText = "";
-        let aiMsgNode = null;
-
+        
         while (true) {
             if (currentAbortController.signal.aborted) break;
 
-            // Stream handler
-            for await (const chunk of result.stream) {
-                if (currentAbortController.signal.aborted) break;
-                loadingDiv.remove();
-                
-                const chunkText = chunk.text();
-                fullResponseText += chunkText;
-                
-                if (!aiMsgNode) aiMsgNode = appendMessageOnly('ai', "");
-                const contentDiv = aiMsgNode.querySelector('.message-content');
-                contentDiv.innerHTML = marked.parse(fullResponseText);
-                
-                // Speculative Pre-fetch: Look for potential filenames in the stream
-                const fileMatches = chunkText.match(/[a-zA-Z0-9_\-\.\/]+\.(js|py|html|css|json|md|txt|ts|jsx|tsx)/g);
-                if (fileMatches) {
-                    fileMatches.forEach(path => {
-                        if (!fileCache.has(path) && path.length > 4) {
-                            console.log("🚀 Speculative pre-fetch:", path);
-                            ghReadFile(path); // Fire and forget into cache
-                        }
-                    });
-                }
-                
-                scrollToBottom();
-            }
-
-            const response = await result.response;
+            const response = result.response;
             const functionCalls = response.functionCalls();
+            const textResponse = response.text();
+            
+            if (textResponse && textResponse.trim() !== "") {
+                fullResponseText += textResponse + "\n";
+                loadingDiv.remove();
+                appendMessageOnly('ai', textResponse);
+                addMessageToCurrent('ai', textResponse);
+            }
             
             if (!functionCalls || functionCalls.length === 0) break;
             
-            if (!aiMsgNode) aiMsgNode = appendMessageOnly('ai', "Gathering data...");
+            loadingDiv.remove();
+            let aiMsgNode = chatHistory.lastElementChild;
+            if (!aiMsgNode || !aiMsgNode.classList.contains('ai') || aiMsgNode.innerHTML.includes('thinking')) {
+                aiMsgNode = appendMessageOnly('ai', "Gathering data...");
+            }
             
             const toolPromises = functionCalls.map(async (call) => {
                 if (currentAbortController.signal.aborted) return null;
@@ -1002,18 +987,10 @@ async function handleSend() {
             if (currentAbortController.signal.aborted) break;
 
             chatHistory.appendChild(loadingDiv);
-            result = await session.sendMessageStream(functionResponses, { signal: currentAbortController.signal });
-            fullResponseText = ""; 
-            aiMsgNode = null; // Reset for next stream part
+            result = await session.sendMessage(functionResponses, { signal: currentAbortController.signal });
         }
 
         loadingDiv.remove();
-        if (fullResponseText && !currentAbortController.signal.aborted) {
-            addMessageToCurrent('ai', fullResponseText);
-            // Ensure final highlight
-            if (aiMsgNode) aiMsgNode.querySelectorAll('pre code').forEach(b => Prism.highlightElement(b));
-        }
-
     } catch (e) {
         loadingDiv.remove();
         if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
