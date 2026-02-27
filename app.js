@@ -1418,13 +1418,13 @@ function getChatSession(chatId = currentChatId) {
         }
         const chat = chats.find(c => c.id === chatId);
         const history = chat ? chat.messages.map(m => {
-            const parts = [{ text: m.content || " " }]; // Ensure text is never null/empty
+            const parts = [];
+            if (m.content) parts.push({ text: m.content });
+            else parts.push({ text: " " }); // Fallback for SDK iterator
+            
             if (m.image) {
                 parts.unshift({
-                    inlineData: {
-                        mimeType: m.image.mimeType,
-                        data: m.image.data
-                    }
+                    inlineData: { mimeType: m.image.mimeType, data: m.image.data }
                 });
             }
             return {
@@ -1630,7 +1630,8 @@ async function handleSend() {
             const roundStartTime = Date.now();
             const thoughtDuration = Math.round((roundStartTime - lastRoundStartTime) / 1000);
             if (toolDepth > 0 && aiMsgNode) {
-                appendReasoningStep(aiMsgNode, 'thought', `Thought for ${thoughtDuration}s`);
+                // This is the thought from the PREVIOUS round's processing/gathering
+                // appendReasoningStep(aiMsgNode, 'thought', `Brain Step: Round ${toolDepth}`, 'Processing');
             }
             if (toolDepth >= MAX_TOOL_DEPTH) {
                 appendMessageOnly('system', `⛔ Max tool depth (${MAX_TOOL_DEPTH}) reached without completing the task. Please clarify what you need or try a more targeted approach.`);
@@ -1680,18 +1681,24 @@ async function handleSend() {
                 }
             }
             
-            let textResponse = response.text();
+            let textResponse = "";
+            try { textResponse = response.text() || ""; } catch(e) { console.log("No text part in turn result."); }
+
             const functionCalls = response.functionCalls();
             
-            // --- NEW: Extract and display Thoughts ---
+            // --- NEW: Robust Thought Extraction ---
             let innerThought = "";
-            const thoughtMatch = textResponse.match(/<thought>([\s\S]*?)<\/thought>/);
+            const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
+            const thoughtMatch = textResponse.match(thoughtRegex);
             if (thoughtMatch) {
                 innerThought = thoughtMatch[1].trim();
                 textResponse = textResponse.replace(thoughtMatch[0], "").trim();
             }
 
             if (textResponse || innerThought) {
+                const thoughtDuration = Math.round((Date.now() - lastRoundStartTime) / 1000);
+                lastRoundStartTime = Date.now(); // Update start time for next logical block
+
                 loadingDiv.remove();
                 if (targetChatId === currentChatId) {
                     if (!aiMsgNode) {
@@ -1702,7 +1709,6 @@ async function handleSend() {
                     }
                     
                     if (innerThought) {
-                        const thoughtDuration = Math.round((Date.now() - lastRoundStartTime) / 1000);
                         appendReasoningStep(aiMsgNode, 'thought', `Thought for ${thoughtDuration}s`, 'Reasoning', innerThought);
                     }
                 }
