@@ -284,6 +284,22 @@ body {
     100% { transform: scale(0.8); opacity: 0.5; }
 }
 
+/* Reasoning Steps UI */
+.reasoning-step {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.8rem; color: var(--text-secondary);
+    margin: 4px 0; opacity: 0.8; animation: slideIn 0.3s ease-out;
+}
+.reasoning-step .icon { font-size: 0.9rem; }
+.reasoning-step.thought { font-style: italic; color: var(--accent); opacity: 1; margin: 12px 0; font-weight: 500; }
+.reasoning-step .badge { 
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.75rem;
+}
+.reasoning-step.edited .badge { color: var(--success); border-color: rgba(16, 185, 129, 0.3); }
+
+@keyframes slideIn { from { opacity: 0; transform: translateX(-5px); } to { opacity: 1; transform: translateX(0); } }
+
 /* Mobile */
 @media (max-width: 768px) {
     #sidebar { position: fixed; transform: translateX(-100%); height: 100%; top: 0; bottom: 0; width: 85%; }

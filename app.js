@@ -1459,6 +1459,24 @@ function appendMessageOnly(role, content) {
     return msgDiv;
 }
 
+function appendReasoningStep(msgDiv, type, text, badge = '') {
+    const step = document.createElement('div');
+    step.className = `reasoning-step ${type}`;
+    let icon = '🧠';
+    if (type === 'analyzed') icon = '📄';
+    if (type === 'searched') icon = '🔍';
+    if (type === 'edited') icon = '📝';
+    if (type === 'terminal') icon = '💻';
+
+    step.innerHTML = `
+        <span class="icon">${icon}</span>
+        <span class="text">${text}</span>
+        ${badge ? `<span class="badge">${badge}</span>` : ''}
+    `;
+    msgDiv.querySelector('.message-content').appendChild(step);
+    scrollToBottom();
+}
+
 function appendToolCall(msgDiv, toolName, args) {
     const toolDiv = document.createElement('div');
     toolDiv.className = 'tool-call';
@@ -1581,8 +1599,17 @@ async function handleSend() {
         const SEARCH_TOOLS = new Set(['search_code','grep_search','list_files','get_repo_map','semantic_search','recall_memories']);
         const EDIT_TOOLS = new Set(['patch_file','patch_file_multi','write_file']);
 
+        let totalThoughtTime = 0;
+        let lastRoundStartTime = Date.now();
+
         while (true) {
             if (targetAbortController.signal.aborted) break;
+            
+            const roundStartTime = Date.now();
+            const thoughtDuration = Math.round((roundStartTime - lastRoundStartTime) / 1000);
+            if (toolDepth > 0 && aiMsgNode) {
+                appendReasoningStep(aiMsgNode, 'thought', `Thought for ${thoughtDuration}s`);
+            }
             if (toolDepth >= MAX_TOOL_DEPTH) {
                 appendMessageOnly('system', `⛔ Max tool depth (${MAX_TOOL_DEPTH}) reached without completing the task. Please clarify what you need or try a more targeted approach.`);
                 break;
@@ -1662,6 +1689,23 @@ async function handleSend() {
 
             const toolPromises = functionCalls.map(async (call, index) => {
                 if (targetAbortController.signal.aborted) return null;
+                
+                // --- NEW: Granular Reasoning Logs ---
+                if (aiMsgNode) {
+                    const name = call.name;
+                    const args = call.args || {};
+                    if (name === 'view_file') {
+                        appendReasoningStep(aiMsgNode, 'analyzed', `Analyzed ${args.path}`, `#L${args.start_line || 1}-${args.end_line || 'end'}`);
+                    } else if (name === 'grep_search' || name === 'search_code') {
+                        appendReasoningStep(aiMsgNode, 'searched', `Searched for "${args.query}"`, args.path || 'Global');
+                    } else if (name === 'patch_file' || name === 'write_file') {
+                        const file = args.path || 'file';
+                        appendReasoningStep(aiMsgNode, 'edited', `Modified ${file}`, 'Pending');
+                    } else if (name === 'run_terminal_command' || name === 'verify_and_fix') {
+                        appendReasoningStep(aiMsgNode, 'terminal', `Executing: ${args.command}`, 'Terminal');
+                    }
+                }
+
                 const toolDiv = appendToolCall(aiMsgNode, call.name, call.args);
                 
                 const sig = makeSignature(call.name, call.args);
@@ -1728,6 +1772,7 @@ async function handleSend() {
             const finalContent = aiMsgNode.querySelector('.message-content').innerText;
             sendCompletionNotification(finalContent);
         }
+        lastRoundStartTime = Date.now(); // Reset for next potential queued message
         if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) handleSend();
     }
 }
