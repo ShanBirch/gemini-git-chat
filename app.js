@@ -521,13 +521,15 @@ function renderCurrentChat() {
     }
 }
 
-function addMessageToCurrent(role, content) {
-    const chat = chats.find(c => c.id === currentChatId);
+function addMessageToCurrent(role, content) { addMessageToChat(currentChatId, role, content); }
+
+function addMessageToChat(chatId, role, content) {
+    const chat = chats.find(c => c.id === chatId);
     if (!chat) return;
     if (chat.messages.length === 0 && role === 'user') {
         chat.title = content.length > 25 ? content.substring(0, 25) + '...' : content;
         renderChatList();
-        mobileChatTitle.textContent = chat.title;
+        if (chatId === currentChatId) mobileChatTitle.textContent = chat.title;
     }
     chat.messages.push({ role, content, image: currentAttachedImage });
     saveChats();
@@ -1302,27 +1304,16 @@ function getProvider(model) {
 }
 
 // --- AI Integration ---
-function setupAI() {
-    const key = geminiKeyInput.value.trim();
-    if (!key) return;
-    const chat = chats.find(c => c.id === currentChatId);
-    let rawModelName = (chat && chat.model) || chatModelSelect.value || "gemini-3-flash-preview";
-    const modelName = mapModelName(rawModelName);
-    
-    genAI = new GoogleGenerativeAI(key);
-    const safetySettings = [
-        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-    ];
-
+function getAIConfig() {
     const isPlanning = planningModeToggle.checked;
     const baseInstruction = `You are GitChat AI, an Elite Autonomous Software Engineer optimizing for speed, accuracy, and decisive action.
 Do not second-guess yourself unnecessarily.
 CRITICAL: When you perform a "System Upgrade" (improving GitChat's own code), increment the version number in 'index.html' (e.g. from v1.3.0 to v1.4.0).
 Repo: '${currentRepo}' | Branch: '${currentBranch}'.`;
 
+    // Full instructions
+    
+    // Actually let's just make the real full instructions available
     const planningInstruction = `${baseInstruction}
 CRITICAL: You are currently in PLANNING MODE.
 1. DO NOT use 'write_file' or 'patch_file' yet.
@@ -1345,11 +1336,18 @@ Done. That's it. 3 steps max before you start editing.
 - NEVER use get_repo_map or list_files unless you genuinely don't know which file to touch.
 - NEVER use read_file on large files — it's slow and wastes your context window.
 - For large files (lib/learning-inline.js is 12,000+ lines): grep_search → view_file tight range → patch.
-- If you are stuck after 3 searches, STOP and ask the user: "I found X at line Y — want me to edit that?"
+- If you are stuck after 3 searches, STOP and ask the user: "I found X at line Z — want me to edit that?"
 - patch_file_multi for multiple edits in one commit. patch_file for single edits.
 - After patching, use 'verify_and_fix' to ensure you didn't break the build. Note that patching now only STAGES files.
 - You MUST call 'push_to_github' when you are done with all your edits to actually commit and deploy them.
 - If 'verify_and_fix' fails, analyze the error output, patch the file again, and then call 'verify_and_fix' one more time to confirm.`;
+
+    const safetySettings = [
+        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+    ];
 
     const geminiTools = [
         { name: "line_count", description: "FAST: Get the total line count and file size WITHOUT reading content. Use this before view_file on any unfamiliar file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
@@ -1388,16 +1386,27 @@ Done. That's it. 3 steps max before you start editing.
 
     let finalInstruction = isPlanning ? planningInstruction : executionInstruction;
     if (localTerminalEnabled) {
-        finalInstruction += `\n\n## LOCAL TERMINAL ACCESS (ACTIVE):
-- You have access to 'run_terminal_command'. Use it for tests, builds, or complex local tasks.
-- Project CWD: '${window.location.pathname}'.`;
+        finalInstruction += `\n\n## LOCAL TERMINAL ACCESS (ACTIVE):\n- You have access to 'run_terminal_command'. Use it for tests, builds, or complex local tasks.\n- Project CWD: '${window.location.pathname}'.`;
     }
+
+    return { safetySettings, geminiTools, finalInstruction, planningInstruction, executionInstruction, isPlanning };
+}
+
+function setupAI() {
+    const key = geminiKeyInput.value.trim();
+    if (!key) return;
+    const chat = chats.find(c => c.id === currentChatId);
+    let rawModelName = (chat && chat.model) || chatModelSelect.value || "gemini-3-flash-preview";
+    const modelName = mapModelName(rawModelName);
+    
+    genAI = new GoogleGenerativeAI(key);
+    const config = getAIConfig();
 
     currentAiModel = genAI.getGenerativeModel({ 
         model: modelName, 
-        safetySettings,
-        tools: [{ functionDeclarations: geminiTools }],
-        systemInstruction: finalInstruction
+        safetySettings: config.safetySettings,
+        tools: [{ functionDeclarations: config.geminiTools }],
+        systemInstruction: config.finalInstruction
     });
 }
 
@@ -1560,11 +1569,12 @@ async function handleSend() {
     }
     
     const getSessionWithModel = (mName) => {
+        const config = getAIConfig();
         const genModel = genAI.getGenerativeModel({ 
             model: mName,
-            systemInstruction: isPlanning ? planningInstruction : executionInstruction,
-            tools: [{ functionDeclarations: geminiTools }],
-            safetySettings 
+            systemInstruction: config.isPlanning ? config.planningInstruction : config.executionInstruction,
+            tools: [{ functionDeclarations: config.geminiTools }],
+            safetySettings: config.safetySettings
         });
         // We bypass the cache for Think Tank to allow model switching, 
         // but we seed it with existing history
@@ -1629,11 +1639,12 @@ async function handleSend() {
                         console.log("Think Tank Upgrade: Switching to Gemini 3.1 Pro Preview for implementation phase.");
                         const history = session.getHistory();
                         currentModelName = "gemini-3.1-pro-preview";
+                        const config = getAIConfig();
                         const proModel = genAI.getGenerativeModel({ 
                             model: currentModelName,
-                            systemInstruction: isPlanning ? planningInstruction : executionInstruction,
-                            tools: [{ functionDeclarations: geminiTools }],
-                            safetySettings 
+                            systemInstruction: config.isPlanning ? config.planningInstruction : config.executionInstruction,
+                            tools: [{ functionDeclarations: config.geminiTools }],
+                            safetySettings: config.safetySettings
                         });
                         session = proModel.startChat({ history });
                         
@@ -1665,7 +1676,7 @@ async function handleSend() {
 
             if (textResponse && textResponse.trim()) {
                 loadingDiv.remove();
-                if (activeChatId === currentChatId) {
+                if (targetChatId === currentChatId) {
                     if (!aiMsgNode) {
                         aiMsgNode = appendMessageOnly('ai', textResponse);
                     } else {
@@ -1673,7 +1684,7 @@ async function handleSend() {
                         contentDiv.innerHTML += marked.parse(textResponse);
                     }
                 }
-                addMessageToChat(activeChatId, 'ai', textResponse);
+                addMessageToChat(targetChatId, 'ai', textResponse);
             }
 
             if (!functionCalls || functionCalls.length === 0) break;
