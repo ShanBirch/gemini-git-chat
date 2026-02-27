@@ -47,9 +47,9 @@ let currentAiModel = null;
 let githubHeaders = {};
 let currentRepo = "";
 let currentBranch = "main";
-let processingChats = new Set();
-let abortControllers = new Map();
-let queuedMessages = {}; // chatId -> array
+let isProcessing = false;
+let currentAbortController = null;
+let queuedMessages = [];
 let buildStatusCheckInterval = null;
 let currentAttachedImage = null; // { mimeType: string, data: string (base64) }
 let supabase = null;
@@ -81,25 +81,21 @@ function debounce(func, wait) {
 // --- Mobile Background 'Stay-Alive' Hack ---
 // Playing silent audio prevents mobile browsers from suspending JS in the background.
 const BackgroundKeeper = {
-    audioCtx: null,
-    osc: null,
+    audioEl: null,
     start() {
         try {
-            if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
-            this.osc = this.audioCtx.createOscillator();
-            const gain = this.audioCtx.createGain();
-            gain.gain.value = 0.001; // Inaudible
-            this.osc.connect(gain);
-            gain.connect(this.audioCtx.destination);
-            this.osc.start();
-            console.log("Background Stay-Alive Active");
+            if (!this.audioEl) {
+                this.audioEl = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+                this.audioEl.loop = true;
+                this.audioEl.volume = 0.01;
+            }
+            this.audioEl.play().catch(() => {});
+            console.log("Background Stay-Alive Active (Audio)");
         } catch (e) { console.warn("Background Stay-Alive failed:", e); }
     },
     stop() {
-        if (this.osc) {
-            try { this.osc.stop(); } catch(e){}
-            this.osc = null;
+        if (this.audioEl) {
+            try { this.audioEl.pause(); } catch(e){}
         }
     }
 };
@@ -324,30 +320,21 @@ function setupEventListeners() {
     window.addEventListener('touchcancel', handleTouchEnd, { passive: true });
 }
 
-function stopGeneration(chatId = currentChatId) {
-    const controller = abortControllers.get(chatId);
-    if (controller) {
-        controller.abort();
-        abortControllers.delete(chatId);
+function stopGeneration() {
+    if (currentAbortController) {
+        currentAbortController.abort();
     }
 }
 
-function setProcessingState(processing, chatId = currentChatId) {
-    if (processing) processingChats.add(chatId);
-    else processingChats.delete(chatId);
-    
-    // Only update UI if the affected chat is the one currently visible
-    if (chatId === currentChatId) {
-        if (processing) {
-            sendBtn.style.display = 'none';
-            stopBtn.style.display = 'flex';
-            stopBtn.style.background = 'var(--error)';
-        } else {
-            sendBtn.style.display = 'flex';
-            stopBtn.style.display = 'none';
-        }
+function setProcessingState(processing) {
+    isProcessing = processing;
+    if (processing) {
+        sendBtn.style.display = 'none';
+        stopBtn.style.display = 'flex';
+    } else {
+        sendBtn.style.display = 'flex';
+        stopBtn.style.display = 'none';
     }
-    renderChatList(); // Update dots or indicators in sidebar
 }
 
 function openSidebar() { sidebar.classList.add('open'); sidebarOverlay.classList.add('active'); }
@@ -372,7 +359,7 @@ function createNewChat() {
     const newChat = { id: Date.now().toString(), title: "New Chat", messages: [], model: chatModelSelect.value, createdAt: new Date().toISOString() };
     chats.unshift(newChat);
     currentChatId = newChat.id;
-    setupAI();
+    setupAI(); // Ensure model object exists for startChat
     if (genAI && currentAiModel) chatSessions[currentChatId] = currentAiModel.startChat({ history: [] });
     saveChats();
     renderChatList();
@@ -384,16 +371,6 @@ function switchChat(id) {
     currentChatId = id;
     renderChatList();
     renderCurrentChat();
-    
-    // Update UI state based on whether THIS chat is processing
-    if (processingChats.has(id)) {
-        sendBtn.style.display = 'none';
-        stopBtn.style.display = 'flex';
-    } else {
-        sendBtn.style.display = 'flex';
-        stopBtn.style.display = 'none';
-    }
-
     setupAI();
     if (window.innerWidth <= 768) closeSidebar();
 }
@@ -455,8 +432,7 @@ function renderChatList() {
     chats.forEach(chat => {
         const tab = document.createElement('div');
         tab.className = `chat-tab ${chat.id === currentChatId ? 'active' : ''}`;
-        const status = processingChats.has(chat.id) ? '<span class="pulse-dot"></span>' : '';
-        tab.innerHTML = `${status}<span class="chat-tab-title">${chat.title}</span><button class="delete-chat-btn" title="Delete session">✕</button>`;
+        tab.innerHTML = `<span class="chat-tab-title">${chat.title}</span><button class="delete-chat-btn" title="Delete session">✕</button>`;
         tab.addEventListener('click', () => switchChat(chat.id));
         tab.querySelector('.delete-chat-btn').addEventListener('click', (e) => deleteChat(chat.id, e));
         chatListEl.appendChild(tab);
@@ -521,12 +497,16 @@ function renderCurrentChat() {
 }
 
 function addMessageToCurrent(role, content) {
-    const chat = chats.find(c => c.id === currentChatId);
+    addMessageToChat(currentChatId, role, content);
+}
+
+function addMessageToChat(chatId, role, content) {
+    const chat = chats.find(c => c.id === chatId);
     if (!chat) return;
     if (chat.messages.length === 0 && role === 'user') {
         chat.title = content.length > 25 ? content.substring(0, 25) + '...' : content;
         renderChatList();
-        mobileChatTitle.textContent = chat.title;
+        if (chatId === currentChatId) mobileChatTitle.textContent = chat.title;
     }
     chat.messages.push({ role, content, image: currentAttachedImage });
     saveChats();
@@ -1241,10 +1221,8 @@ function mapModelName(name) {
     if (!name) return "gemini-1.5-flash-latest";
     let normalized = name.toLowerCase().trim();
     if (normalized === "think-tank") return "think-tank";
-    if (normalized.includes("nano-banana-pro") || normalized.includes("gemini-3-pro-image")) return "gemini-3-pro-image-preview";
-    if (normalized.includes("nano-banana-2") || normalized.includes("gemini-3.1-flash-image")) return "gemini-3.1-flash-image-preview";
     if (normalized.includes("3.1-pro")) return "gemini-3.1-pro-preview";
-    if (normalized.includes("3-flash") || normalized.includes("3.0-flash")) return "gemini-3-flash-preview";
+    if (normalized.includes("3.0-flash")) return "gemini-3.0-flash-preview";
     if (normalized.includes("2.0-flash")) return "gemini-2.0-flash";
     if (normalized.includes("3.1-pro-preview")) return "gemini-3.1-pro-preview";
     if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
@@ -1443,8 +1421,7 @@ function scrollToBottom() { chatHistory.scrollTop = chatHistory.scrollHeight; }
 
 async function handleSend() {
     const text = chatInput.value.trim();
-    const targetChatId = currentChatId;
-    if (!text && (!queuedMessages[targetChatId] || queuedMessages[targetChatId].length === 0)) return;
+    if (!text && queuedMessages.length === 0) return;
 
     if (!currentAiModel) {
         alert("Please map a Gemini Key in Settings first.");
@@ -1452,17 +1429,19 @@ async function handleSend() {
         return;
     }
 
-    if (processingChats.has(targetChatId)) {
-        if (!queuedMessages[targetChatId]) queuedMessages[targetChatId] = [];
-        queuedMessages[targetChatId].push(text);
-        appendMessageOnly('user', text);
-        addMessageToCurrent('user', text);
+    const activeChatId = currentChatId;
+
+    if (isProcessing) {
+        queuedMessages.push(text);
+        if (activeChatId === currentChatId) appendMessageOnly('user', text);
+        addMessageToChat(activeChatId, 'user', text);
         chatInput.value = '';
         chatInput.style.height = 'auto';
+        stopGeneration();
         return;
     }
 
-    setProcessingState(true, targetChatId);
+    setProcessingState(true);
     requestWakeLock();
     let messageToSend = text;
     let imageDataToSend = currentAttachedImage;
@@ -1473,9 +1452,9 @@ async function handleSend() {
         currentAttachedImage = null;
         imagePreviewContainer.style.display = 'none';
         imageInput.value = '';
-    } else if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) {
-        messageToSend = queuedMessages[targetChatId].join('\n');
-        queuedMessages[targetChatId] = [];
+    } else if (queuedMessages.length > 0) {
+        messageToSend = queuedMessages.join('\n');
+        queuedMessages = [];
     }
     
     chatInput.value = '';
@@ -1500,8 +1479,8 @@ async function handleSend() {
     let session = null;
     
     if (model === "think-tank") {
-        currentModelName = "gemini-3-flash-preview"; // Start with Gemini 3 Flash Preview as shown in Google AI Studio
-        console.log("Think Tank Initialized: Starting with Gemini 3 Flash Preview");
+        currentModelName = "gemini-3.0-flash-preview"; // Start with Flash 3.0 Preview
+        console.log("Think Tank Initialized: Starting with Flash 3.0 Preview");
     }
     
     const getSessionWithModel = (mName) => {
@@ -1521,8 +1500,8 @@ async function handleSend() {
         return genModel.startChat({ history });
     };
 
-    const targetAbortController = new AbortController();
-    abortControllers.set(targetChatId, targetAbortController);
+    session = (model === "think-tank") ? getSessionWithModel(currentModelName) : getChatSession();
+    currentAbortController = new AbortController();
 
     try {
         const parts = [{ text: messageToSend }];
@@ -1545,7 +1524,7 @@ async function handleSend() {
         const EDIT_TOOLS = new Set(['patch_file','patch_file_multi','write_file']);
 
         while (true) {
-            if (targetAbortController.signal.aborted) break;
+            if (currentAbortController.signal.aborted) break;
             if (toolDepth >= MAX_TOOL_DEPTH) {
                 appendMessageOnly('system', `⛔ Max tool depth (${MAX_TOOL_DEPTH}) reached without completing the task. Please clarify what you need or try a more targeted approach.`);
                 break;
@@ -1578,7 +1557,7 @@ async function handleSend() {
                         chatHistory.appendChild(upgradeNotice);
                     }
 
-                    result = await session.sendMessage(currentParts, { signal: targetAbortController.signal });
+                    result = await session.sendMessage(currentParts, { signal: currentAbortController.signal });
                     response = result.response;
                     break;
                 } catch (err) {
@@ -1624,7 +1603,7 @@ async function handleSend() {
             }
 
             const toolPromises = functionCalls.map(async (call, index) => {
-                if (targetAbortController.signal.aborted) return null;
+                if (currentAbortController.signal.aborted) return null;
                 const toolDiv = appendToolCall(aiMsgNode, call.name, call.args);
                 
                 const sig = makeSignature(call.name, call.args);
@@ -1685,13 +1664,13 @@ async function handleSend() {
         }
     } finally {
         releaseWakeLock();
-        abortControllers.delete(targetChatId);
-        setProcessingState(false, targetChatId);
+        currentAbortController = null;
+        setProcessingState(false);
         if (aiMsgNode) {
             const finalContent = aiMsgNode.querySelector('.message-content').innerText;
             sendCompletionNotification(finalContent);
         }
-        if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) handleSend();
+        if (queuedMessages.length > 0) handleSend();
     }
 }
 
@@ -1733,13 +1712,11 @@ async function callOpenAICompatibleModel(provider, model, message, image, loadin
     const key = provider === 'deepseek' ? deepseekKeyInput.value.trim() : minimaxKeyInput.value.trim();
     const endpoint = provider === 'deepseek' ? "https://api.deepseek.com/v1/chat/completions" : "https://api.minimax.chat/v1/text/chatcompletion_v2";
     
-    if (!key) { alert(`Please enter your ${provider} key in settings.`); loading.remove(); setProcessingState(false, currentChatId); return; }
+    if (!key) { alert(`Please enter your ${provider} key in settings.`); loading.remove(); setProcessingState(false); return; }
 
-    const targetChatId = currentChatId;
-    const targetAbortController = new AbortController();
-    abortControllers.set(targetChatId, targetAbortController);
-
-    const chat = chats.find(c => c.id === targetChatId);
+    const activeChatId = currentChatId;
+    currentAbortController = new AbortController();
+    const chat = chats.find(c => c.id === activeChatId);
     
     const messages = [];
     messages.push({ role: 'system', content: `You are GitChat AI, an Elite Autonomous Software Engineer. 
@@ -1817,7 +1794,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
         const EDIT_TOOLS = new Set(['patch_file','patch_file_multi','write_file']);
 
         while(true) {
-            if (targetAbortController.signal.aborted) break;
+            if (currentAbortController.signal.aborted) break;
             if (toolDepth >= MAX_TOOL_DEPTH) {
                 appendMessageOnly('system', "Maximum tool depth reached. Stopping to prevent loop.");
                 break;
@@ -1833,7 +1810,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
                         body: JSON.stringify({ model, messages, tools, tool_choice: "auto" }),
-                        signal: targetAbortController.signal
+                        signal: currentAbortController.signal
                     });
                     if (res.ok) break;
                     if (res.status === 429 || res.status >= 500) {
@@ -1912,13 +1889,11 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
         appendMessageOnly('ai', `Error: ${e.message}`);
     } finally {
         loading.remove();
-        abortControllers.delete(targetChatId);
-        setProcessingState(false, targetChatId);
+        setProcessingState(false);
         releaseWakeLock();
         if (aiMsgNode) {
             sendCompletionNotification("Task finished.");
         }
-        if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) handleSend();
     }
 }
 
