@@ -1886,7 +1886,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
         }
     } catch (e) {
         loading.remove();
-        appendMessageOnly('ai', `Error: ${e.message}`);
+        if (activeChatId === currentChatId) appendMessageOnly('ai', `Error: ${e.message}`);
     } finally {
         loading.remove();
         setProcessingState(false);
