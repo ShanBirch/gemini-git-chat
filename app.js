@@ -1838,8 +1838,8 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
 
             if (aiMsg.content) {
                 loading.remove();
-                appendMessageOnly('ai', aiMsg.content);
-                addMessageToCurrent('ai', aiMsg.content);
+                if (activeChatId === currentChatId) appendMessageOnly('ai', aiMsg.content);
+                addMessageToChat(activeChatId, 'ai', aiMsg.content);
             }
 
             if (!aiMsg.tool_calls || aiMsg.tool_calls.length === 0) break;
