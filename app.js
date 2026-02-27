@@ -50,6 +50,7 @@ let currentBranch = "main";
 let processingChats = new Set();
 let abortControllers = new Map();
 let queuedMessages = {}; // chatId -> array
+let stagedFiles = new Map(); // path -> content
 let buildStatusCheckInterval = null;
 let currentAttachedImage = null; // { mimeType: string, data: string (base64) }
 let supabase = null;
@@ -1117,49 +1118,77 @@ async function ghRunLighthouse() {
 }
 
 async function ghWriteFile(path, content, commit_message) {
+    // UPDATED: Staging mode to save money/builds
+    fileCache.set(path, content);
+    stagedFiles.set(path, content);
+    console.log(`Staged change for ${path}`);
+    return `Successfully STAGED changes for ${path}. These are now in the local buffer. Call 'push_to_github' when you have finished all your edits to commit everything at once.`;
+}
+
+async function ghPushToGithub(commitMessage = "Apply batched changes from GitChat AI") {
+    if (stagedFiles.size === 0) return "No staged changes to push.";
+    
     try {
-        let sha = undefined;
-        // 1. Get current file SHA if it exists
-        const getRes = await fetch(`https://api.github.com/repos/${currentRepo}/contents/${path}?ref=${currentBranch}`, { headers: githubHeaders });
-        if (getRes.ok) {
-            const getData = await getRes.json();
-            sha = getData.sha;
+        updateStatus("Committing Batch...", "neutral");
+        
+        // 1. Get the current head commit
+        const branchRes = await fetch(`https://api.github.com/repos/${currentRepo}/branches/${currentBranch}`, { headers: githubHeaders });
+        if (!branchRes.ok) throw new Error("Failed to fetch branch head");
+        const branchData = await branchRes.json();
+        const baseCommitSha = branchData.commit.sha;
+        const baseTreeSha = branchData.commit.commit.tree.sha;
+
+        // 2. Create the tree entries
+        const treeEntries = [];
+        for (const [path, content] of stagedFiles.entries()) {
+            treeEntries.push({
+                path: path,
+                mode: "100644",
+                type: "blob",
+                content: content
+            });
         }
 
-        // 2. Prepare content - Fast chunked Base64 for UTF-8 (avoids slow char loop)
-        const bytes = new TextEncoder().encode(content);
-        const CHUNK = 8192;
-        let binaryString = "";
-        for (let i = 0; i < bytes.byteLength; i += CHUNK) {
-            binaryString += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-        }
-        const base64Content = btoa(binaryString);
-
-        // 3. Send update
-        const body = { 
-            message: commit_message || `Update ${path}`, 
-            content: base64Content, 
-            branch: currentBranch 
-        };
-        if (sha) body.sha = sha;
-
-        const putRes = await fetch(`https://api.github.com/repos/${currentRepo}/contents/${path}`, {
-            method: 'PUT',
+        // 3. Create a new tree
+        const treeRes = await fetch(`https://api.github.com/repos/${currentRepo}/git/trees`, {
+            method: 'POST',
             headers: { ...githubHeaders, "Content-Type": "application/json" },
-            body: JSON.stringify(body)
+            body: JSON.stringify({ base_tree: baseTreeSha, tree: treeEntries })
         });
+        if (!treeRes.ok) throw new Error("Failed to create tree");
+        const treeData = await treeRes.json();
+        const newTreeSha = treeData.sha;
 
-        if (!putRes.ok) {
-            const errData = await putRes.json();
-            throw new Error(`GitHub Error ${putRes.status}: ${errData.message || errData.statusText}`);
-        }
+        // 4. Create the commit
+        const commitRes = await fetch(`https://api.github.com/repos/${currentRepo}/git/commits`, {
+            method: 'POST',
+            headers: { ...githubHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: commitMessage,
+                tree: newTreeSha,
+                parents: [baseCommitSha]
+            })
+        });
+        if (!commitRes.ok) throw new Error("Failed to create commit");
+        const commitData = await commitRes.json();
+        const newCommitSha = commitData.sha;
 
-        // Update cache to avoid re-download on next read
-        fileCache.set(path, content);
-        return `Successfully wrote to ${path}! Changes pushed to branch '${currentBranch}'.`;
-    } catch (e) { 
-        console.error("Write File Error:", e);
-        return `Error writing file: ${e.message}`; 
+        // 5. Update the reference
+        const refRes = await fetch(`https://api.github.com/repos/${currentRepo}/git/refs/heads/${currentBranch}`, {
+            method: 'PATCH',
+            headers: { ...githubHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify({ sha: newCommitSha })
+        });
+        if (!refRes.ok) throw new Error("Failed to update reference");
+
+        const count = stagedFiles.size;
+        stagedFiles.clear();
+        updateStatus("Batch Pushed! 🚀", "ok");
+        return `Successfully committed and pushed ${count} file(s) in a single batch to '${currentBranch}'. Netlify build triggered.`;
+    } catch (e) {
+        updateStatus("Push Failed", "error");
+        console.error("Batch Push Error:", e);
+        return `Error pushing batch: ${e.message}`;
     }
 }
 
@@ -1225,10 +1254,16 @@ const toolsMap = {
     recall_memories: (args) => sbRecallMemories(args.query),
     run_lighthouse: () => ghRunLighthouse(),
     run_terminal_command: (args) => ghRunTerminalCommand(args.command, args.cwd),
-    verify_and_fix: (args) => ghVerifyAndFix(args.command)
+    verify_and_fix: (args) => ghVerifyAndFix(args.command),
+    push_to_github: (args) => ghPushToGithub(args.commit_message)
 };
 
 async function ghVerifyAndFix(command) {
+    // Auto-push if there are staged changes before starting verify
+    if (stagedFiles.size > 0) {
+        await ghPushToGithub("Auto-push for Verify & Fix loop");
+    }
+    
     if (localTerminalEnabled) {
         return await ghRunTerminalCommand(command);
     } else {
@@ -1312,7 +1347,8 @@ Done. That's it. 3 steps max before you start editing.
 - For large files (lib/learning-inline.js is 12,000+ lines): grep_search → view_file tight range → patch.
 - If you are stuck after 3 searches, STOP and ask the user: "I found X at line Y — want me to edit that?"
 - patch_file_multi for multiple edits in one commit. patch_file for single edits.
-- After patching, use 'verify_and_fix' to ensure you didn't break the build.
+- After patching, use 'verify_and_fix' to ensure you didn't break the build. Note that patching now only STAGES files.
+- You MUST call 'push_to_github' when you are done with all your edits to actually commit and deploy them.
 - If 'verify_and_fix' fails, analyze the error output, patch the file again, and then call 'verify_and_fix' one more time to confirm.`;
 
     const geminiTools = [
@@ -1331,7 +1367,8 @@ Done. That's it. 3 steps max before you start editing.
         { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
         { name: "remember_this", description: "Save a fact about the user, their tech preferences, or project rules for long-term memory.", parameters: { type: "OBJECT", properties: { fact: { type: "STRING" }, category: { type: "STRING" } }, required: ["fact"] } },
         { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
-        { name: "verify_and_fix", description: "AUTONOMOUS MODE: Provide a command (e.g. 'npm run build' or 'pytest'). The AI will run it, read errors, and automatically keep patching until it passes. Use this after making major changes.", parameters: { type: "OBJECT", properties: { command: { type: "STRING" } }, required: ["command"] } }
+        { name: "verify_and_fix", description: "AUTONOMOUS MODE: Provide a command (e.g. 'npm run build' or 'pytest'). The AI will run it, read errors, and automatically keep patching until it passes. Use this after making major changes. Note: This will auto-push staged changes.", parameters: { type: "OBJECT", properties: { command: { type: "STRING" } }, required: ["command"] } },
+        { name: "push_to_github", description: "FINALIZE: Commit and push all STAGED changes to GitHub in a single batch. Use this AFTER you have finished all your file edits. This triggers a single Netlify build.", parameters: { type: "OBJECT", properties: { commit_message: { type: "STRING" } } } }
     ];
 
     if (localTerminalEnabled) {
