@@ -1657,10 +1657,10 @@ async function handleSend() {
     } catch (e) {
         loadingDiv.remove();
         if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
-            appendMessageOnly('system', 'Generation stopped.');
+            if (activeChatId === currentChatId) appendMessageOnly('system', 'Generation stopped.');
         } else {
             console.error("Full AI Error:", e);
-            appendMessageOnly('ai', e.message);
+            if (activeChatId === currentChatId) appendMessageOnly('ai', e.message);
         }
     } finally {
         releaseWakeLock();
