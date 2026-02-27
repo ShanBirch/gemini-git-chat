@@ -190,6 +190,26 @@ body {
 .thinking-msg { animation: thinkingPulse 2s infinite ease-in-out; }
 @keyframes thinkingPulse { 0% { opacity: 0.5; } 50% { opacity: 0.9; } 100% { opacity: 0.5; } }
 
+/* AI Thought Bubble — mid-task reasoning shown between tool calls */
+.ai-thought {
+    margin: 8px 0 4px 0;
+    padding: 6px 10px 6px 12px;
+    border-left: 3px solid rgba(99, 102, 241, 0.5);
+    background: rgba(99, 102, 241, 0.07);
+    border-radius: 0 6px 6px 0;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.ai-thought::before {
+    content: '';
+    display: inline;
+}
+
+
 /* Input Bar */
 .input-area { 
     padding: 20px; width: 100%; max-width: 900px; margin: 0 auto; 

@@ -1118,21 +1118,26 @@ CRITICAL: You are currently in PLANNING MODE.
 
     const executionInstruction = `${baseInstruction}
 
-## WORKFLOW — follow this order, do not skip steps:
-1. grep_search the most likely file for the key term → get line numbers immediately
+## MANDATORY: Before EVERY set of tool calls, write one short sentence starting with "🧠" explaining:
+- Which file you're looking in and why
+- What you expect to find
+Example: "🧠 The lesson content lives in lib/learning-inline.js — grepping for the topic to get a line number."
+This is REQUIRED. Never call a tool without a preceding thought. It helps the user understand your reasoning and spot mistakes.
+
+## WORKFLOW — 3 steps max before editing:
+1. grep_search the most likely file → get line numbers immediately
 2. view_file ±30 lines around the match → read just enough context
 3. patch_file or patch_file_multi → make the edit
-Done. That's it. 3 steps max before you start editing.
 
 ## RULES:
 - search_code returns file paths + matching lines. Use it ONCE then switch to grep_search.
-- NEVER call the same tool twice with similar args. If a search returns nothing useful, move on.
+- NEVER call the same tool twice with similar args. If a search returns nothing useful, ask the user.
 - NEVER use get_repo_map or list_files unless you genuinely don't know which file to touch.
-- NEVER use read_file on large files — it's slow and wastes your context window.
-- For large files (lib/learning-inline.js is 12,000+ lines): grep_search → view_file with tight range → patch.
-- If you are stuck after 3 searches, STOP and ask the user: "I found X, Y — which one do you want me to edit?"
-- PATCHING: patch_file_multi for multiple edits to same file in one commit. patch_file for single edits.
-- BUILD: After patching, check get_build_status. Fix failures.`;
+- NEVER use read_file on large files — slow and wastes context.
+- For large files (lib/learning-inline.js is 12,000+ lines): grep_search → view_file tight range → patch.
+- If stuck after 3 searches, STOP and ask: "I found X at line Y — want me to edit that?"
+- patch_file_multi for multiple edits in one commit. patch_file for single edits.
+- After patching, check get_build_status.`;
 
     currentAiModel = genAI.getGenerativeModel({ 
         model: modelName, 
@@ -1215,6 +1220,24 @@ function appendMessageOnly(role, content) {
     chatHistory.appendChild(msgDiv);
     scrollToBottom();
     return msgDiv;
+}
+
+// Renders mid-task AI reasoning — styled differently from final answers
+function appendThought(aiMsgNode, text) {
+    if (!text || !text.trim()) return;
+    const thoughtDiv = document.createElement('div');
+    thoughtDiv.className = 'ai-thought';
+    thoughtDiv.textContent = text.trim();
+    aiMsgNode.querySelector('.message-content').appendChild(thoughtDiv);
+    scrollToBottom();
+}
+
+// Appends text to existing AI node without creating a new bubble
+function appendToAiNode(aiMsgNode, text) {
+    const contentDiv = aiMsgNode.querySelector('.message-content');
+    contentDiv.innerHTML += marked.parse(text);
+    setTimeout(() => contentDiv.querySelectorAll('pre code').forEach(b => Prism.highlightElement(b)), 10);
+    scrollToBottom();
 }
 
 function appendToolCall(msgDiv, toolName, args) {
@@ -1343,16 +1366,25 @@ async function handleSend() {
             
             const textResponse = response.text();
             const functionCalls = response.functionCalls();
+            const isThinkingTurn = functionCalls && functionCalls.length > 0;
 
             if (textResponse && textResponse.trim()) {
                 loadingDiv.remove();
-                if (!aiMsgNode) {
-                    aiMsgNode = appendMessageOnly('ai', textResponse);
+                if (isThinkingTurn) {
+                    // Mid-task reasoning — show as a thought bubble inside the current AI node
+                    if (!aiMsgNode) {
+                        aiMsgNode = appendMessageOnly('ai', 'Gathering data...');
+                    }
+                    appendThought(aiMsgNode, textResponse);
                 } else {
-                    const contentDiv = aiMsgNode.querySelector('.message-content');
-                    contentDiv.innerHTML += marked.parse(textResponse);
+                    // Final answer — render as normal AI message
+                    if (!aiMsgNode) {
+                        aiMsgNode = appendMessageOnly('ai', textResponse);
+                    } else {
+                        appendToAiNode(aiMsgNode, textResponse);
+                    }
+                    addMessageToCurrent('ai', textResponse);
                 }
-                addMessageToCurrent('ai', textResponse);
             }
 
             if (!functionCalls || functionCalls.length === 0) break;
