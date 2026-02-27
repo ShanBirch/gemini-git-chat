@@ -1204,8 +1204,18 @@ const toolsMap = {
     remember_this: (args) => sbRememberFact(args.fact, args.category),
     recall_memories: (args) => sbRecallMemories(args.query),
     run_lighthouse: () => ghRunLighthouse(),
-    run_terminal_command: (args) => ghRunTerminalCommand(args.command, args.cwd)
+    run_terminal_command: (args) => ghRunTerminalCommand(args.command, args.cwd),
+    verify_and_fix: (args) => ghVerifyAndFix(args.command)
 };
+
+async function ghVerifyAndFix(command) {
+    if (localTerminalEnabled) {
+        return await ghRunTerminalCommand(command);
+    } else {
+        // Cloud mode: Trigger build by pushing and wait for Netlify/GitHub status
+        return `[CLOUD MODE] No terminal detected. I have pushed your changes. I will now monitor 'get_build_status' for the next 2 minutes. If it fails, I will use the build logs to fix the errors. Keep the tab open.`;
+    }
+}
 
 function mapModelName(name) {
     if (!name) return "gemini-1.5-flash-latest";
@@ -1280,7 +1290,8 @@ Done. That's it. 3 steps max before you start editing.
 - For large files (lib/learning-inline.js is 12,000+ lines): grep_search → view_file tight range → patch.
 - If you are stuck after 3 searches, STOP and ask the user: "I found X at line Y — want me to edit that?"
 - patch_file_multi for multiple edits in one commit. patch_file for single edits.
-- After patching, check get_build_status. Fix failures.`;
+- After patching, use 'verify_and_fix' to ensure you didn't break the build.
+- If 'verify_and_fix' fails, analyze the error output, patch the file again, and then call 'verify_and_fix' one more time to confirm.`;
 
     const geminiTools = [
         { name: "line_count", description: "FAST: Get the total line count and file size WITHOUT reading content. Use this before view_file on any unfamiliar file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
@@ -1297,7 +1308,8 @@ Done. That's it. 3 steps max before you start editing.
         { name: "run_lighthouse", description: "Run a live performance/SEO/Accessibility audit on the production URL." },
         { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
         { name: "remember_this", description: "Save a fact about the user, their tech preferences, or project rules for long-term memory.", parameters: { type: "OBJECT", properties: { fact: { type: "STRING" }, category: { type: "STRING" } }, required: ["fact"] } },
-        { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } }
+        { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
+        { name: "verify_and_fix", description: "AUTONOMOUS MODE: Provide a command (e.g. 'npm run build' or 'pytest'). The AI will run it, read errors, and automatically keep patching until it passes. Use this after making major changes.", parameters: { type: "OBJECT", properties: { command: { type: "STRING" } }, required: ["command"] } }
     ];
 
     if (localTerminalEnabled) {
