@@ -1278,20 +1278,18 @@ function mapModelName(name) {
     if (!name) return "gemini-1.5-flash-latest";
     let normalized = name.toLowerCase().trim();
     if (normalized === "think-tank") return "think-tank";
-    if (normalized.includes("nano-banana-pro") || normalized.includes("gemini-3-pro-image")) return "gemini-3-pro-image-preview";
-    if (normalized.includes("nano-banana-2") || normalized.includes("gemini-3.1-flash-image")) return "gemini-3.1-flash-image-preview";
-    if (normalized.includes("3.1-pro")) return "gemini-3.1-pro-preview";
+    
+    // Core Gemini 3 mappings
+    if (normalized.includes("3.1-pro")) return "gemini-3.1-pro-preview"; 
+    if (normalized.includes("3.1-flash")) return "gemini-3.1-flash-image-preview";
+    if (normalized.includes("3-pro") || normalized.includes("3.0-pro")) return "gemini-3-pro-preview";
     if (normalized.includes("3-flash") || normalized.includes("3.0-flash")) return "gemini-3-flash-preview";
     if (normalized.includes("2.0-flash")) return "gemini-2.0-flash";
-    if (normalized.includes("3.1-pro-preview")) return "gemini-3.1-pro-preview";
-    if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
-    if (normalized.includes("3-pro-preview") || normalized.includes("3.0-pro-preview")) return "gemini-3-pro-preview";
-    if (normalized.includes("3-pro") || normalized.includes("3.0-pro")) return "gemini-3-pro";
-    if (normalized.includes("3-flash-preview") || normalized.includes("3.0-flash-preview")) return "gemini-3-flash-preview";
-    if (normalized.includes("3-flash") || normalized.includes("3.0-flash")) return "gemini-3-flash";
-    if (normalized.includes("2-flash") || normalized.includes("2.0-flash")) return "gemini-2.0-flash";
-    if (normalized.includes("2.5-pro")) return "gemini-2.5-pro";
-    if (normalized.includes("2.5-flash")) return "gemini-2.5-flash";
+    
+    // Banana variants
+    if (normalized.includes("nano-banana-pro")) return "gemini-3-pro-image-preview";
+    if (normalized.includes("nano-banana-2")) return "gemini-3.1-flash-image-preview";
+    
     if (normalized.includes("deepseek")) return "deepseek-v3.2";
     if (normalized.includes("minimax")) return "minimax-m2.5";
     return normalized;
@@ -1411,15 +1409,15 @@ function setupAI() {
 }
 
 
-function getChatSession() {
-    if (!chatSessions[currentChatId]) {
+function getChatSession(chatId = currentChatId) {
+    if (!chatSessions[chatId]) {
         if (!currentAiModel) {
             alert("Model not initialized. Please check your Gemini Key in settings.");
             return null;
         }
-        const chat = chats.find(c => c.id === currentChatId);
+        const chat = chats.find(c => c.id === chatId);
         const history = chat ? chat.messages.map(m => {
-            const parts = [{ text: m.content }];
+            const parts = [{ text: m.content || " " }]; // Ensure text is never null/empty
             if (m.image) {
                 parts.unshift({
                     inlineData: {
@@ -1433,9 +1431,9 @@ function getChatSession() {
                 parts: parts
             };
         }) : [];
-        chatSessions[currentChatId] = currentAiModel.startChat({ history });
+        chatSessions[chatId] = currentAiModel.startChat({ history });
     }
-    return chatSessions[currentChatId];
+    return chatSessions[chatId];
 }
 
 // --- UI Rendering ---
@@ -1568,7 +1566,7 @@ async function handleSend() {
         console.log("Think Tank Initialized: Starting with Gemini 3 Flash Preview");
     }
     
-    const getSessionWithModel = (mName) => {
+    const getSessionWithModel = (mId, mName) => {
         const config = getAIConfig();
         const genModel = genAI.getGenerativeModel({ 
             model: mName,
@@ -1576,12 +1574,10 @@ async function handleSend() {
             tools: [{ functionDeclarations: config.geminiTools }],
             safetySettings: config.safetySettings
         });
-        // We bypass the cache for Think Tank to allow model switching, 
-        // but we seed it with existing history
-        const chatObj = chats.find(c => c.id === currentChatId);
+        const chatObj = chats.find(c => c.id === mId);
         const history = chatObj ? chatObj.messages.map(m => ({
             role: m.role === 'ai' ? 'model' : 'user',
-            parts: [{ text: m.content }]
+            parts: [{ text: m.content || " " }] // Fix 't is not iterable'
         })) : [];
         return genModel.startChat({ history });
     };
@@ -1589,7 +1585,8 @@ async function handleSend() {
     const targetAbortController = new AbortController();
     abortControllers.set(targetChatId, targetAbortController);
 
-    session = (model === "think-tank") ? getSessionWithModel(currentModelName) : getChatSession();
+    session = (model === "think-tank") ? getSessionWithModel(targetChatId, currentModelName) : getChatSession(targetChatId);
+    if (!session) { loadingDiv.remove(); setProcessingState(true, targetChatId); return; } // Keep processing true if we failed to init but have controller? No, false.
     if (!session) { loadingDiv.remove(); setProcessingState(false, targetChatId); return; }
 
     try {
