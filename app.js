@@ -1429,10 +1429,12 @@ async function handleSend() {
         return;
     }
 
+    const activeChatId = currentChatId;
+
     if (isProcessing) {
         queuedMessages.push(text);
-        appendMessageOnly('user', text);
-        addMessageToCurrent('user', text);
+        if (activeChatId === currentChatId) appendMessageOnly('user', text);
+        addMessageToChat(activeChatId, 'user', text);
         chatInput.value = '';
         chatInput.style.height = 'auto';
         stopGeneration();
