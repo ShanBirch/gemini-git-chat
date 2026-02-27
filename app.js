@@ -265,8 +265,8 @@ function setupEventListeners() {
                 }
             } else if (pullDistance > 0) {
                 pullDistance = 0;
-                pullToRefreshEl.style.transform = `translateY(0)`;
-                appEl.style.transform = `translateY(0)`;
+                pullToRefreshEl.style.transform = '';
+                appEl.style.transform = '';
             }
         }
     }, { passive: true });
@@ -275,14 +275,15 @@ function setupEventListeners() {
         if (pullDistance >= PULL_THRESHOLD) {
             pullToRefreshEl.querySelector('span').textContent = "Refreshing...";
             // Reset transforms immediately BEFORE reload to avoid sticky state
-            pullToRefreshEl.style.transform = `translateY(0)`;
-            appEl.style.transform = `translateY(0)`;
+            pullToRefreshEl.style.transform = '';
+            appEl.style.transform = '';
             setTimeout(() => window.location.reload(), 100);
         } else {
-            pullToRefreshEl.style.transform = `translateY(0)`;
-            appEl.style.transform = `translateY(0)`;
+            pullToRefreshEl.style.transform = '';
+            appEl.style.transform = '';
         }
         pullDistance = 0;
+        isPulling = false;
     };
 
     window.addEventListener('touchend', handleTouchEnd, { passive: true });
