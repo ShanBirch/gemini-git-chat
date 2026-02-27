@@ -67,6 +67,7 @@ let chats = [];
 let currentChatId = null;
 const fileCache = new Map();
 let chatSessions = {};
+let localTerminalEnabled = false;
 
 // Initialize
 async function init() {
@@ -78,9 +79,24 @@ async function init() {
     loadChats();
     setupEventListeners();
     initAuth();
+    checkLocalTerminal();
     marked.setOptions({ breaks: true, gfm: true });
     startBuildStatusPolling();
 }
+
+async function checkLocalTerminal() {
+    try {
+        const res = await fetch('http://localhost:3000/api/status');
+        if (res.ok) {
+            localTerminalEnabled = true;
+            const statusEl = document.getElementById('local-status');
+            if (statusEl) statusEl.innerHTML = `💻 Terminal: <span style="color:var(--success)">Online</span>`;
+        }
+    } catch (e) {
+        localTerminalEnabled = false;
+    }
+}
+
 
 // Event Listeners
 function setupEventListeners() {
@@ -795,6 +811,24 @@ async function ghPatchFile(path, search, replace, commit_message) {
     } catch (e) { return `Error patching: ${e.message}`; }
 }
 
+async function ghRunTerminalCommand(command, cwd) {
+    if (!localTerminalEnabled) return "Error: Local terminal is not connected. Run 'npm start' in the gemini-git-chat folder.";
+    try {
+        const res = await fetch('http://localhost:3000/api/shell', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command, cwd })
+        });
+        const data = await res.json();
+        let output = `[EXIT CODE ${data.exitCode}]\n`;
+        if (data.stdout) output += `STDOUT:\n${data.stdout}\n`;
+        if (data.stderr) output += `STDERR:\n${data.stderr}\n`;
+        if (data.error) output += `ERROR:\n${data.error}\n`;
+        return output;
+    } catch (e) { return `Error connecting to local terminal: ${e.message}`; }
+}
+
+
 async function ghGetBuildStatus() {
     if (!githubHeaders || !currentRepo) return "Not connected.";
     try {
@@ -1057,7 +1091,8 @@ const toolsMap = {
     semantic_search: (args) => sbSemanticSearch(args.query),
     remember_this: (args) => sbRememberFact(args.fact, args.category),
     recall_memories: (args) => sbRecallMemories(args.query),
-    run_lighthouse: () => ghRunLighthouse()
+    run_lighthouse: () => ghRunLighthouse(),
+    run_terminal_command: (args) => ghRunTerminalCommand(args.command, args.cwd)
 };
 
 function mapModelName(name) {
@@ -1139,31 +1174,54 @@ This is REQUIRED. Never call a tool without a preceding thought. It helps the us
 - patch_file_multi for multiple edits in one commit. patch_file for single edits.
 - After patching, check get_build_status.`;
 
+    const geminiTools = [
+        { name: "line_count", description: "FAST: Get the total line count and file size WITHOUT reading content. Use this before view_file on any unfamiliar file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
+        { name: "list_files", description: "List files in a directory.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
+        { name: "get_repo_map", description: "Get the entire repository structure recursively." },
+        { name: "search_code", description: "Search for strings/symbols across all files.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
+        { name: "grep_search", description: "Search for a pattern/string inside a SPECIFIC file. Returns line numbers. Use this to find WHICH lines to view before calling view_file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, query: { type: "STRING" } }, required: ["path", "query"] } },
+        { name: "view_file", description: "View specific lines of a file. ALWAYS provide start_line and end_line to avoid loading huge files. Use grep_search first to find the right line range.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, start_line: { type: "INTEGER" }, end_line: { type: "INTEGER" } }, required: ["path"] } },
+        { name: "patch_file", description: "Surgical single replacement. Provide enough surrounding context (3-5 lines) in 'search' to make it unique. Prefer patch_file_multi for multiple changes.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
+        { name: "patch_file_multi", description: "PREFERRED for large files: Apply multiple surgical replacements to ONE file in a SINGLE commit. Much faster than calling patch_file repeatedly.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, patches: { type: "ARRAY", items: { type: "OBJECT", properties: { search: { type: "STRING" }, replace: { type: "STRING" } }, required: ["search", "replace"] } }, commit_message: { type: "STRING" } }, required: ["path", "patches"] } },
+        { name: "read_file", description: "Read an ENTIRE file. WARNING: Very slow/expensive on large files. Only use for small config/JSON files. Use view_file+grep_search for code files.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
+        { name: "write_file", description: "Full file overwrite. ONLY use for NEW files or very small files. For existing code, use patch_file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
+        { name: "get_build_status", description: "Check CI/Build logs." },
+        { name: "run_lighthouse", description: "Run a live performance/SEO/Accessibility audit on the production URL." },
+        { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
+        { name: "remember_this", description: "Save a fact about the user, their tech preferences, or project rules for long-term memory.", parameters: { type: "OBJECT", properties: { fact: { type: "STRING" }, category: { type: "STRING" } }, required: ["fact"] } },
+        { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } }
+    ];
+
+    if (localTerminalEnabled) {
+        geminiTools.push({ 
+            name: "run_terminal_command", 
+            description: "Run a command in the user's local terminal. Use this for tests, builds, or file operations.", 
+            parameters: { 
+                type: "OBJECT", 
+                properties: { 
+                    command: { type: "STRING", description: "The shell command to run." },
+                    cwd: { type: "STRING", description: "Optional: relative directory to run in." }
+                }, 
+                required: ["command"] 
+            } 
+        });
+    }
+
+    let finalInstruction = isPlanning ? planningInstruction : executionInstruction;
+    if (localTerminalEnabled) {
+        finalInstruction += `\n\n## LOCAL TERMINAL ACCESS (ACTIVE):
+- You have access to 'run_terminal_command'. Use it for tests, builds, or complex local tasks.
+- Project CWD: '${window.location.pathname}'.`;
+    }
+
     currentAiModel = genAI.getGenerativeModel({ 
         model: modelName, 
         safetySettings,
-        tools: [{
-            functionDeclarations: [
-                { name: "line_count", description: "FAST: Get the total line count and file size WITHOUT reading content. Use this before view_file on any unfamiliar file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
-                { name: "list_files", description: "List files in a directory.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
-                { name: "get_repo_map", description: "Get the entire repository structure recursively." },
-                { name: "search_code", description: "Search for strings/symbols across all files.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
-                { name: "grep_search", description: "Search for a pattern/string inside a SPECIFIC file. Returns line numbers. Use this to find WHICH lines to view before calling view_file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, query: { type: "STRING" } }, required: ["path", "query"] } },
-                { name: "view_file", description: "View specific lines of a file. ALWAYS provide start_line and end_line to avoid loading huge files. Use grep_search first to find the right line range.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, start_line: { type: "INTEGER" }, end_line: { type: "INTEGER" } }, required: ["path"] } },
-                { name: "patch_file", description: "Surgical single replacement. Provide enough surrounding context (3-5 lines) in 'search' to make it unique. Prefer patch_file_multi for multiple changes.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } },
-                { name: "patch_file_multi", description: "PREFERRED for large files: Apply multiple surgical replacements to ONE file in a SINGLE commit. Much faster than calling patch_file repeatedly.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, patches: { type: "ARRAY", items: { type: "OBJECT", properties: { search: { type: "STRING" }, replace: { type: "STRING" } }, required: ["search", "replace"] } }, commit_message: { type: "STRING" } }, required: ["path", "patches"] } },
-                { name: "read_file", description: "Read an ENTIRE file. WARNING: Very slow/expensive on large files. Only use for small config/JSON files. Use view_file+grep_search for code files.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" } }, required: ["path"] } },
-                { name: "write_file", description: "Full file overwrite. ONLY use for NEW files or very small files. For existing code, use patch_file.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, content: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "content", "commit_message"] } },
-                { name: "get_build_status", description: "Check CI/Build logs." },
-                { name: "run_lighthouse", description: "Run a live performance/SEO/Accessibility audit on the production URL." },
-                { name: "semantic_search", description: "Find code snippets by meaning/intent using the Supabase index.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
-                { name: "remember_this", description: "Save a fact about the user, their tech preferences, or project rules for long-term memory.", parameters: { type: "OBJECT", properties: { fact: { type: "STRING" }, category: { type: "STRING" } }, required: ["fact"] } },
-                { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } }
-            ]
-        }],
-        systemInstruction: isPlanning ? planningInstruction : executionInstruction
+        tools: [{ functionDeclarations: geminiTools }],
+        systemInstruction: finalInstruction
     });
 }
+
 
 function getChatSession() {
     if (!chatSessions[currentChatId]) {
@@ -1554,12 +1612,41 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
         { type: "function", function: { name: "write_file", description: "Full file overwrite. Only for new/tiny files.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
     ];
 
+    if (localTerminalEnabled) {
+        tools.push({
+            type: "function",
+            function: {
+                name: "run_terminal_command",
+                description: "Run a command in the user's local terminal.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        command: { type: "string" },
+                        cwd: { type: "string" }
+                    },
+                    required: ["command"]
+                }
+            }
+        });
+    }
+
+
+    if (localTerminalEnabled) {
+        messages[0].content += "\n\nLOCAL TERMINAL ACTIVE. Use 'run_terminal_command' to run shell commands or tests locally.";
+    }
+
     try {
-        let toolHistory = new Set();
+        let toolHistory = new Map();
         let toolDepth = 0;
-        const MAX_TOOL_DEPTH = 100;
-        let hasEditted = false;
+        const MAX_TOOL_DEPTH = 35;
+        let hasEdited = false;
         let aiMsgNode = null;
+        let searchOnlyStreak = 0;
+        
+        const normalizeArg = (v) => String(v).toLowerCase().replace(/[\'"\s]/g, '');
+        const makeSignature = (name, args) => name + '-' + Object.values(args || {}).map(normalizeArg).join('|');
+        const SEARCH_TOOLS = new Set(['search_code','grep_search','list_files','get_repo_map','semantic_search','recall_memories']);
+        const EDIT_TOOLS = new Set(['patch_file','patch_file_multi','write_file']);
 
         while(true) {
             if (currentAbortController.signal.aborted) break;
