@@ -1211,8 +1211,8 @@ function mapModelName(name) {
     if (!name) return "gemini-1.5-flash-latest";
     let normalized = name.toLowerCase().trim();
     if (normalized === "think-tank") return "think-tank";
-    if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
-    if (normalized.includes("3.0-flash")) return "gemini-3.0-flash";
+    if (normalized.includes("3.1-pro")) return "gemini-3.1-pro-preview";
+    if (normalized.includes("3.0-flash")) return "gemini-3.0-flash-preview";
     if (normalized.includes("2.0-flash")) return "gemini-2.0-flash";
     if (normalized.includes("3.1-pro-preview")) return "gemini-3.1-pro-preview";
     if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
@@ -1465,8 +1465,8 @@ async function handleSend() {
     let session = null;
     
     if (model === "think-tank") {
-        currentModelName = "gemini-3.0-flash"; // Start with Flash
-        console.log("Think Tank Initialized: Starting with Flash 3.0");
+        currentModelName = "gemini-3.0-flash-preview"; // Start with Flash 3.0 Preview
+        console.log("Think Tank Initialized: Starting with Flash 3.0 Preview");
     }
     
     const getSessionWithModel = (mName) => {
@@ -1522,11 +1522,11 @@ async function handleSend() {
             
             while (retryCount <= maxRetries) {
                 try {
-                    // THINK TANK UPGRADE: If we've started editing or reached a depth threshold, switch to Pro
-                    if (model === "think-tank" && currentModelName !== "gemini-3.1-pro" && (hasEdited || toolDepth >= 4)) {
-                        console.log("Think Tank Upgrade: Switching to Gemini 3.1 Pro for implementation phase.");
+                    // THINK TANK UPGRADE: If we've started editing or reached a depth threshold, switch to Pro 3.1 Preview
+                    if (model === "think-tank" && currentModelName !== "gemini-3.1-pro-preview" && (hasEdited || toolDepth >= 4)) {
+                        console.log("Think Tank Upgrade: Switching to Gemini 3.1 Pro Preview for implementation phase.");
                         const history = session.getHistory();
-                        currentModelName = "gemini-3.1-pro";
+                        currentModelName = "gemini-3.1-pro-preview";
                         const proModel = genAI.getGenerativeModel({ 
                             model: currentModelName,
                             systemInstruction: isPlanning ? planningInstruction : executionInstruction,
