@@ -48,6 +48,7 @@ let githubHeaders = {};
 let currentRepo = "";
 let currentBranch = "main";
 let isProcessing = false;
+let currentProcessingChatId = null;
 let currentAbortController = null;
 let queuedMessages = [];
 let buildStatusCheckInterval = null;
@@ -330,14 +331,20 @@ function stopGeneration() {
     }
 }
 
-function setProcessingState(processing) {
+function setProcessingState(processing, chatId = currentChatId) {
     isProcessing = processing;
-    if (processing) {
-        sendBtn.style.display = 'none';
-        stopBtn.style.display = 'flex';
-    } else {
-        sendBtn.style.display = 'flex';
-        stopBtn.style.display = 'none';
+    currentProcessingChatId = processing ? chatId : null;
+    
+    // Only update UI if the affected chat is the one currently visible
+    if (chatId === currentChatId) {
+        if (processing) {
+            sendBtn.style.display = 'none';
+            stopBtn.style.display = 'flex';
+            stopBtn.style.background = 'var(--error)';
+        } else {
+            sendBtn.style.display = 'flex';
+            stopBtn.style.display = 'none';
+        }
     }
 }
 
@@ -361,6 +368,7 @@ function saveChats() {
 
 function createNewChat() {
     const newChat = { id: Date.now().toString(), title: "New Chat", messages: [], model: chatModelSelect.value, createdAt: new Date().toISOString() };
+    if (isProcessing) stopGeneration(); // Stop previous before starting fresh
     chats.unshift(newChat);
     currentChatId = newChat.id;
     setupAI(); // Ensure model object exists for startChat
@@ -375,6 +383,17 @@ function switchChat(id) {
     currentChatId = id;
     renderChatList();
     renderCurrentChat();
+    
+    // Update UI state for processing buttons
+    const processingThisChat = (isProcessing && currentProcessingChatId === currentChatId);
+    if (processingThisChat) {
+        sendBtn.style.display = 'none';
+        stopBtn.style.display = 'flex';
+    } else {
+        sendBtn.style.display = 'flex';
+        stopBtn.style.display = 'none';
+    }
+
     setupAI();
     if (window.innerWidth <= 768) closeSidebar();
 }
@@ -1421,6 +1440,7 @@ function scrollToBottom() { chatHistory.scrollTop = chatHistory.scrollHeight; }
 
 async function handleSend() {
     const text = chatInput.value.trim();
+    const targetChatId = currentChatId;
     if (!text && queuedMessages.length === 0) return;
 
     if (!currentAiModel) {
@@ -1439,7 +1459,7 @@ async function handleSend() {
         return;
     }
 
-    setProcessingState(true);
+    setProcessingState(true, targetChatId);
     requestWakeLock();
     let messageToSend = text;
     let imageDataToSend = currentAttachedImage;
@@ -1661,7 +1681,7 @@ async function handleSend() {
     } finally {
         releaseWakeLock();
         currentAbortController = null;
-        setProcessingState(false);
+        setProcessingState(false, targetChatId);
         if (aiMsgNode) {
             const finalContent = aiMsgNode.querySelector('.message-content').innerText;
             sendCompletionNotification(finalContent);
