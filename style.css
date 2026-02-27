@@ -57,7 +57,7 @@ body {
 
 .sidebar-header {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 24px 20px; flex-shrink: 0;
+    padding: calc(24px + env(safe-area-inset-top)) 20px 24px; flex-shrink: 0;
 }
 .sidebar-header h2 { font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
 
