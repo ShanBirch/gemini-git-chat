@@ -192,8 +192,11 @@ body {
 
 /* Input Bar */
 .input-area { 
-    padding: 20px; width: 100%; max-width: 900px; margin: 0 auto; 
+    padding: 20px; padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    width: 100%; max-width: 900px; margin: 0 auto; 
     background: var(--bg-main);
+    flex-shrink: 0; /* Prevent it from being squished by chat history */
+    z-index: 10;
 }
 .input-container { display: flex; flex-direction: column; gap: 10px; }
 .input-toolbar { display: flex; gap: 8px; }
