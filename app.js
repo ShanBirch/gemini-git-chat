@@ -1577,13 +1577,15 @@ async function handleSend() {
 
             if (textResponse && textResponse.trim()) {
                 loadingDiv.remove();
-                if (!aiMsgNode) {
-                    aiMsgNode = appendMessageOnly('ai', textResponse);
-                } else {
-                    const contentDiv = aiMsgNode.querySelector('.message-content');
-                    contentDiv.innerHTML += marked.parse(textResponse);
+                if (activeChatId === currentChatId) {
+                    if (!aiMsgNode) {
+                        aiMsgNode = appendMessageOnly('ai', textResponse);
+                    } else {
+                        const contentDiv = aiMsgNode.querySelector('.message-content');
+                        contentDiv.innerHTML += marked.parse(textResponse);
+                    }
                 }
-                addMessageToCurrent('ai', textResponse);
+                addMessageToChat(activeChatId, 'ai', textResponse);
             }
 
             if (!functionCalls || functionCalls.length === 0) break;
