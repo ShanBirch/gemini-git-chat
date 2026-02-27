@@ -497,12 +497,16 @@ function renderCurrentChat() {
 }
 
 function addMessageToCurrent(role, content) {
-    const chat = chats.find(c => c.id === currentChatId);
+    addMessageToChat(currentChatId, role, content);
+}
+
+function addMessageToChat(chatId, role, content) {
+    const chat = chats.find(c => c.id === chatId);
     if (!chat) return;
     if (chat.messages.length === 0 && role === 'user') {
         chat.title = content.length > 25 ? content.substring(0, 25) + '...' : content;
         renderChatList();
-        mobileChatTitle.textContent = chat.title;
+        if (chatId === currentChatId) mobileChatTitle.textContent = chat.title;
     }
     chat.messages.push({ role, content, image: currentAttachedImage });
     saveChats();
