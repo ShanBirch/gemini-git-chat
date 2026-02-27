@@ -45,7 +45,7 @@
             </div>
             <div style="padding: 0 16px 8px; font-size: 10px; color: var(--text-secondary); opacity: 0.6; display: flex; align-items: center; justify-content: space-between;">
                 <div style="display: flex; align-items: center; gap: 6px;">
-                    <span style="padding: 2px 6px; background: rgba(99, 102, 241, 0.2); color: var(--accent); border-radius: 4px; font-weight: bold;">v2.9.0-REVERT-STYLE</span>
+                    <span style="padding: 2px 6px; background: rgba(99, 102, 241, 0.2); color: var(--accent); border-radius: 4px; font-weight: bold;">v2.7.0-LOCAL</span>
                     <span>Build: 0e27244</span>
                 </div>
                 <div id="local-status" style="font-weight: 600;">💻 Terminal: <span style="opacity: 0.5;">Offline</span></div>
@@ -75,17 +75,11 @@
                     </div>
                     
                     <div class="settings-content" id="settings-content">
-                        <div class="input-group">
-                            <label for="gemini-key">
-                                Gemini API Key
-                                <a href="#" id="verify-models-link" style="font-size: 0.7em; margin-left: auto; color: var(--accent); text-decoration: none;">Verify Access</a>
-                            </label>
-                            <input type="password" id="gemini-key" placeholder="AIzaSy...">
-                        </div>
-                        
-                        <div class="input-group">
-                            <label for="github-token">GitHub PAT Token</label>
-                            <input type="password" id="github-token" placeholder="ghp_...">
+                        <!-- Hidden Keys Managed by Netlify Backend -->
+                        <div style="display: none;">
+                            <input type="password" id="gemini-key">
+                            <a href="#" id="verify-models-link">Verify Access</a>
+                            <input type="password" id="github-token">
                         </div>
                         
                         <div class="input-group">
@@ -100,16 +94,10 @@
                             <input type="text" id="github-branch" placeholder="main" value="main">
                         </div>
 
-                        <div class="section-divider" style="height:1px; background:var(--border); margin:12px 0;"></div>
-
-                        <div class="input-group">
-                            <label for="deepseek-key">DeepSeek API Key</label>
-                            <input type="password" id="deepseek-key" placeholder="sk-...">
-                        </div>
-
-                        <div class="input-group">
-                            <label for="minimax-key">MiniMax API Key</label>
-                            <input type="password" id="minimax-key" placeholder="sk-...">
+                        <!-- Hidden Keys Managed by Netlify Backend -->
+                        <div style="display: none;">
+                            <input type="password" id="deepseek-key">
+                            <input type="password" id="minimax-key">
                         </div>
                         
                         <div class="input-group">
@@ -124,16 +112,15 @@
                             <span>Not connected</span>
                         </div>
 
-                        <div class="section-divider" style="height:1px; background:var(--border); margin:12px 0;"></div>
-                        
-                        <div class="input-group">
-                            <label for="supabase-url"><span class="emoji">☁️</span> Supabase Sync (Optional)</label>
-                            <input type="text" id="supabase-url" placeholder="https://your-project.supabase.co">
-                            <input type="password" id="supabase-key" placeholder="Anon/Public Key" style="margin-top:8px;">
+                        <!-- Sync completely backend managed now -->
+                        <div style="display: none;">
+                            <input type="text" id="supabase-url">
+                            <input type="password" id="supabase-key">
+                            <button id="enable-sync">Enable Cloud Sync</button>
+                            <button id="copy-sync-link">Copy Permalink to Settings</button>
                         </div>
-                        <button id="enable-sync" class="btn primary full-width" style="background:rgba(16, 185, 129, 0.1); color:var(--success); border:1px solid rgba(16, 185, 129, 0.2);">Enable Cloud Sync</button>
+                        
                         <button id="index-repo-btn" class="btn primary full-width" style="margin-top:8px; background:rgba(99, 102, 241, 0.1); color:var(--accent); border:1px solid rgba(99, 102, 241, 0.2);">Index Repo (Semantic Search) 🧠</button>
-                        <button id="copy-sync-link" class="btn full-width" style="margin-top:8px; font-size: 0.75rem; background: rgba(255,255,255,0.05);">Copy Permalink to Settings 🔗</button>
                     </div>
                 </div>
 
