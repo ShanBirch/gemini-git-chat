@@ -750,13 +750,24 @@ async function ghGetRepoMap(forceRefresh = false) {
 }
 
 async function ghSearchCode(query) {
+    // GitHub code search only returns file paths — we enhance it by also grepping those files
     try {
         const url = `https://api.github.com/search/code?q=${encodeURIComponent(query)}+repo:${currentRepo}`;
         const res = await fetch(url, { headers: githubHeaders });
-        if (!res.ok) throw new Error(`${res.status}`);
+        if (!res.ok) throw new Error(`GitHub search ${res.status} - rate limited? Try grep_search on a specific file instead.`);
         const data = await res.json();
-        if (data.items.length === 0) return "No results found.";
-        return data.items.slice(0, 15).map(item => `📄 ${item.path}`).join('\n');
+        if (!data.items || data.items.length === 0) return `No files found containing '${query}'. Try grep_search on a specific file if you already know which file it's in.`;
+        
+        const files = data.items.slice(0, 5).map(item => item.path);
+        
+        // Auto-grep the top results so we return actual line numbers, not just file paths
+        let output = `Found in ${data.items.length} file(s). Top results with matching lines:\n\n`;
+        for (const path of files) {
+            const grepResult = await ghGrepSearch(path, query);
+            output += `📄 ${path}:\n${grepResult}\n\n`;
+        }
+        output += `💡 Use view_file with the line numbers above to read context, then patch_file to edit.`;
+        return output;
     } catch (e) { return `Error: ${e.message}`; }
 }
 
@@ -1106,22 +1117,22 @@ CRITICAL: You are currently in PLANNING MODE.
 5. If the user says "Go", "Approve", or similar, then you may begin using write/patch tools.`;
 
     const executionInstruction = `${baseInstruction}
-⚠️ LARGE FILE WARNING: This repo contains very large JS files (some 10,000+ lines, 900KB+). Reading them in full wastes tokens and time. Always:
-  1. Use 'line_count' FIRST to see file size before reading.
-  2. Use 'grep_search' to find the section you want (returns line numbers).
-  3. Use 'view_file' with start_line/end_line to read ONLY the relevant section (200 lines at a time).
-  4. Use 'patch_file' to surgically replace ONLY the changed block — never rewrite the whole file.
-  5. For multiple changes to the same file, use 'patch_file_multi' to do it all in ONE commit.
 
-- AVOID TOOL LOOPS: If you cannot find what you want after a few searches, STOP and ask the user.
-- VISION MODE: If an image is provided, analyze pixels and map to CSS/HTML. Use 'semantic_search' to find relevant style files.
-- MEMORY: Use 'recall_memories' at the start of complex tasks. Use 'remember_this' for project rules.
-- PATCHING: ALWAYS prefer 'patch_file' or 'patch_file_multi'. Only use 'write_file' for NEW files.
-- BUILD LOOP: After pushing code, check 'get_build_status'. Fix failures immediately.
-- PROACTIVE HYPOTHESIS: Form a hypothesis early and patch to test it. Failing fast beats over-analyzing.
-- TURN BUDGET: After 10 exploration turns without a patch, you MUST start editing.
-- ANTI-GRAVITY MINDSET: Act like a senior dev with 5 minutes before a production deploy.
-- CACHING: Do not re-read files already in cache. The cache persists across turns.`;
+## WORKFLOW — follow this order, do not skip steps:
+1. grep_search the most likely file for the key term → get line numbers immediately
+2. view_file ±30 lines around the match → read just enough context
+3. patch_file or patch_file_multi → make the edit
+Done. That's it. 3 steps max before you start editing.
+
+## RULES:
+- search_code returns file paths + matching lines. Use it ONCE then switch to grep_search.
+- NEVER call the same tool twice with similar args. If a search returns nothing useful, move on.
+- NEVER use get_repo_map or list_files unless you genuinely don't know which file to touch.
+- NEVER use read_file on large files — it's slow and wastes your context window.
+- For large files (lib/learning-inline.js is 12,000+ lines): grep_search → view_file with tight range → patch.
+- If you are stuck after 3 searches, STOP and ask the user: "I found X, Y — which one do you want me to edit?"
+- PATCHING: patch_file_multi for multiple edits to same file in one commit. patch_file for single edits.
+- BUILD: After patching, check get_build_status. Fix failures.`;
 
     currentAiModel = genAI.getGenerativeModel({ 
         model: modelName, 
