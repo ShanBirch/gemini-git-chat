@@ -460,9 +460,10 @@ function renderCurrentChat() {
     if (chat.messages.length === 0) {
         chatHistory.innerHTML = `<div class="empty-state"><h1>GitChat AI</h1><p>Your autonomous codebase agent. Connect your repository to get started.</p></div>`;
     } else {
-        chat.messages.forEach(msg => {
+        chat.messages.forEach((msg, idx) => {
             const msgDiv = document.createElement('div');
             msgDiv.className = `message ${msg.role}`;
+            msgDiv.dataset.index = idx; // Track index for targeted highlighting
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
             if (msg.role === 'ai') {
@@ -484,10 +485,18 @@ function renderCurrentChat() {
             msgDiv.appendChild(contentDiv);
             chatHistory.appendChild(msgDiv);
         });
-        setTimeout(() => {
-            chatHistory.querySelectorAll('pre code').forEach((block) => Prism.highlightElement(block));
-            scrollToBottom();
-        }, 10);
+        
+        // Targeted Highlighting: Only highlight the last 5 messages to save CPU
+        const messagesToHighlight = Array.from(chatHistory.querySelectorAll('.message.ai')).slice(-5);
+        messagesToHighlight.forEach(msg => {
+            msg.querySelectorAll('pre code').forEach(block => {
+                if (!block.classList.contains('highlighted')) {
+                    Prism.highlightElement(block);
+                    block.classList.add('highlighted');
+                }
+            });
+        });
+        scrollToBottom();
     }
 }
 
@@ -625,14 +634,32 @@ async function initSupabase(silent = false) {
 
 async function pullChatsFromCloud(silent = false) {
     if (!supabase) return;
-    const { data, error } = await supabase.from('app_state').select('data').eq('id', 'chat_sessions').single();
-    if (data && data.data) {
-        chats = data.data;
+    updateStatus("Syncing Cloud...", "neutral");
+    
+    // 1. Pull the chat index (metadata like titles, IDs, but NOT message content)
+    const { data: indexData } = await supabase.from('app_state').select('data').eq('id', 'chat_index').single();
+    
+    if (indexData && indexData.data) {
+        let remoteChats = indexData.data;
+        
+        // 2. Fetch full content for the CURRENT chat session only
+        const { data: currentChatData } = await supabase.from('app_state')
+            .select('data')
+            .eq('id', `chat_session_${currentChatId}`)
+            .single();
+            
+        if (currentChatData && currentChatData.data) {
+            const chatIdx = remoteChats.findIndex(c => c.id === currentChatId);
+            if (chatIdx !== -1) remoteChats[chatIdx].messages = currentChatData.data.messages;
+        }
+
+        chats = remoteChats;
         saveChats();
         renderChatList();
         renderCurrentChat();
-        if(!silent) alert("Chats restored from Cloud! ☁️");
+        if(!silent) alert("Chats restored (Granular Sync)! ☁️⚡");
     }
+    updateStatus("Synced", "ok");
 }
 
 async function pushSettingsToCloud() {
@@ -650,8 +677,17 @@ async function pushSettingsToCloud() {
 }
 
 async function pushChatsToCloud() {
-    if (!supabase) return;
-    await supabase.from('app_state').upsert({ id: 'chat_sessions', data: chats });
+    if (!supabase || !currentChatId) return;
+    
+    // 1. Push Metadata Index (No messages, just summary info)
+    const index = chats.map(c => ({ id: c.id, title: c.title, model: c.model, updated: Date.now() }));
+    await supabase.from('app_state').upsert({ id: 'chat_index', data: index });
+    
+    // 2. Push Current Chat Content (Only the active one)
+    const currentChat = chats.find(c => c.id === currentChatId);
+    if (currentChat) {
+        await supabase.from('app_state').upsert({ id: `chat_session_${currentChatId}`, data: currentChat });
+    }
 }
 
 async function fetchUserRepos(selectedRepo = "") {
@@ -809,13 +845,19 @@ async function ghGetRepoMap(forceRefresh = false) {
         const data = await res.json();
         
         let map = "";
-        if (data.tree.length > 1000) {
-            // Massive Repo Optimization: Just show top-level structure and key files
-            const topLevel = data.tree.filter(item => !item.path.includes('/'));
-            map = "Repo is massive (>1000 files). Only showing top-level items. Use 'list_files' for deep exploration.\n\n" + 
-                  topLevel.map(item => `${item.type === 'tree' ? '📁' : '📄'} ${item.path}`).join('\n');
+        const tree = data.tree;
+        
+        // Massive Repo Optimization: Lazy structure
+        if (tree.length > 800) {
+            const topLevel = tree.filter(item => !item.path.includes('/'));
+            const keyFolders = [...new Set(tree.filter(item => item.path.includes('/')).map(item => item.path.split('/')[0]))];
+            
+            map = `Repo spans ${tree.length} files. Showing top-level architecture.\n\n` + 
+                  topLevel.map(item => `${item.type === 'tree' ? '📁' : '📄'} ${item.path}`).join('\n') +
+                  "\n\nMajor Directories (use 'list_files' to explore):\n" +
+                  keyFolders.map(f => `📁 ${f}/`).join('\n');
         } else {
-            map = data.tree.map(item => `${item.type === 'tree' ? '📁' : '📄'} ${item.path}`).join('\n');
+            map = tree.map(item => `${item.type === 'tree' ? '📁' : '📄'} ${item.path}`).join('\n');
         }
         
         try { localStorage.setItem(cacheKey, map); } catch(e) { console.warn("Repo map too large for localStorage"); }
@@ -928,31 +970,41 @@ async function sbIndexRepo() {
         // Clear existing index for this repo
         await supabase.from('repo_index').delete().eq('repo_name', currentRepo);
 
-        let count = 0;
-        for (const path of files) {
-            const content = await ghReadFile(path);
-            if (content.length > 30000) continue; // Skip massive files for now or chunk them
-            
-            // Simple chunking: 1000 characters per chunk (approx)
-            const chunks = content.match(/[\s\S]{1,4000}/g) || [content];
-            
-            for (const chunk of chunks) {
-                const embedding = await getEmbedding(chunk);
-                if (embedding) {
-                    await supabase.from('repo_index').insert({
-                        repo_name: currentRepo,
-                        file_path: path,
-                        content: chunk,
-                        embedding: embedding
-                    });
+        // Batch processing: index in sets of 5 files to maximize parallel I/O without hitting rate limits
+        const BATCH_SIZE = 5;
+        for (let i = 0; i < files.length; i += BATCH_SIZE) {
+            const batch = files.slice(i, i + BATCH_SIZE);
+            const batchPromises = batch.map(async (path) => {
+                const content = await ghReadFile(path);
+                if (content.length > 30000 || content.startsWith("Error:")) return;
+                
+                const chunks = content.match(/[\s\S]{1,4000}/g) || [content];
+                const embeddingsToInsert = [];
+
+                for (const chunk of chunks) {
+                    const embedding = await getEmbedding(chunk);
+                    if (embedding) {
+                        embeddingsToInsert.push({
+                            repo_name: currentRepo,
+                            file_path: path,
+                            content: chunk,
+                            embedding: embedding
+                        });
+                    }
                 }
-            }
-            count++;
-            indexRepoBtn.textContent = `Indexed ${count}/${files.length}`;
+                
+                if (embeddingsToInsert.length > 0) {
+                    await supabase.from('repo_index').insert(embeddingsToInsert);
+                }
+            });
+
+            await Promise.all(batchPromises);
+            count += batch.length;
+            indexRepoBtn.textContent = `Indexed ${count}/${files.length} 🔥`;
         }
         
-        alert(`Successfully indexed ${files.length} files! GitChat now has 'Semantic Memory' for this repo.`);
-        updateStatus("Brain Indexed ✨", "ok");
+        alert(`Successfully indexed ${files.length} files with TURBO Batching!`);
+        updateStatus("Repo Insight Indexed ✨", "ok");
     } catch (e) {
         console.error("Indexing failed:", e);
         alert("Indexing failed: " + e.message);
