@@ -48,7 +48,6 @@ let githubHeaders = {};
 let currentRepo = "";
 let currentBranch = "main";
 let isProcessing = false;
-let currentProcessingChatId = null;
 let currentAbortController = null;
 let queuedMessages = [];
 let buildStatusCheckInterval = null;
@@ -82,25 +81,21 @@ function debounce(func, wait) {
 // --- Mobile Background 'Stay-Alive' Hack ---
 // Playing silent audio prevents mobile browsers from suspending JS in the background.
 const BackgroundKeeper = {
-    audioCtx: null,
-    osc: null,
+    audioEl: null,
     start() {
         try {
-            if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
-            this.osc = this.audioCtx.createOscillator();
-            const gain = this.audioCtx.createGain();
-            gain.gain.value = 0.001; // Inaudible
-            this.osc.connect(gain);
-            gain.connect(this.audioCtx.destination);
-            this.osc.start();
-            console.log("Background Stay-Alive Active");
+            if (!this.audioEl) {
+                this.audioEl = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+                this.audioEl.loop = true;
+                this.audioEl.volume = 0.01;
+            }
+            this.audioEl.play().catch(() => {});
+            console.log("Background Stay-Alive Active (Audio)");
         } catch (e) { console.warn("Background Stay-Alive failed:", e); }
     },
     stop() {
-        if (this.osc) {
-            try { this.osc.stop(); } catch(e){}
-            this.osc = null;
+        if (this.audioEl) {
+            try { this.audioEl.pause(); } catch(e){}
         }
     }
 };
@@ -331,20 +326,14 @@ function stopGeneration() {
     }
 }
 
-function setProcessingState(processing, chatId = currentChatId) {
+function setProcessingState(processing) {
     isProcessing = processing;
-    currentProcessingChatId = processing ? chatId : null;
-    
-    // Only update UI if the affected chat is the one currently visible
-    if (chatId === currentChatId) {
-        if (processing) {
-            sendBtn.style.display = 'none';
-            stopBtn.style.display = 'flex';
-            stopBtn.style.background = 'var(--error)';
-        } else {
-            sendBtn.style.display = 'flex';
-            stopBtn.style.display = 'none';
-        }
+    if (processing) {
+        sendBtn.style.display = 'none';
+        stopBtn.style.display = 'flex';
+    } else {
+        sendBtn.style.display = 'flex';
+        stopBtn.style.display = 'none';
     }
 }
 
@@ -368,7 +357,6 @@ function saveChats() {
 
 function createNewChat() {
     const newChat = { id: Date.now().toString(), title: "New Chat", messages: [], model: chatModelSelect.value, createdAt: new Date().toISOString() };
-    if (isProcessing) stopGeneration(); // Stop previous before starting fresh
     chats.unshift(newChat);
     currentChatId = newChat.id;
     setupAI(); // Ensure model object exists for startChat
@@ -383,17 +371,6 @@ function switchChat(id) {
     currentChatId = id;
     renderChatList();
     renderCurrentChat();
-    
-    // Update UI state for processing buttons
-    const processingThisChat = (isProcessing && currentProcessingChatId === currentChatId);
-    if (processingThisChat) {
-        sendBtn.style.display = 'none';
-        stopBtn.style.display = 'flex';
-    } else {
-        sendBtn.style.display = 'flex';
-        stopBtn.style.display = 'none';
-    }
-
     setupAI();
     if (window.innerWidth <= 768) closeSidebar();
 }
@@ -1440,7 +1417,6 @@ function scrollToBottom() { chatHistory.scrollTop = chatHistory.scrollHeight; }
 
 async function handleSend() {
     const text = chatInput.value.trim();
-    const targetChatId = currentChatId;
     if (!text && queuedMessages.length === 0) return;
 
     if (!currentAiModel) {
@@ -1459,7 +1435,7 @@ async function handleSend() {
         return;
     }
 
-    setProcessingState(true, targetChatId);
+    setProcessingState(true);
     requestWakeLock();
     let messageToSend = text;
     let imageDataToSend = currentAttachedImage;
@@ -1681,7 +1657,7 @@ async function handleSend() {
     } finally {
         releaseWakeLock();
         currentAbortController = null;
-        setProcessingState(false, targetChatId);
+        setProcessingState(false);
         if (aiMsgNode) {
             const finalContent = aiMsgNode.querySelector('.message-content').innerText;
             sendCompletionNotification(finalContent);
