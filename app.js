@@ -47,10 +47,9 @@ let currentAiModel = null;
 let githubHeaders = {};
 let currentRepo = "";
 let currentBranch = "main";
-let isProcessing = false;
-let currentProcessingChatId = null;
-let currentAbortController = null;
-let queuedMessages = [];
+let processingChats = new Set();
+let abortControllers = new Map();
+let queuedMessages = {}; // chatId -> array
 let buildStatusCheckInterval = null;
 let currentAttachedImage = null; // { mimeType: string, data: string (base64) }
 let supabase = null;
@@ -325,15 +324,17 @@ function setupEventListeners() {
     window.addEventListener('touchcancel', handleTouchEnd, { passive: true });
 }
 
-function stopGeneration() {
-    if (currentAbortController) {
-        currentAbortController.abort();
+function stopGeneration(chatId = currentChatId) {
+    const controller = abortControllers.get(chatId);
+    if (controller) {
+        controller.abort();
+        abortControllers.delete(chatId);
     }
 }
 
 function setProcessingState(processing, chatId = currentChatId) {
-    isProcessing = processing;
-    currentProcessingChatId = processing ? chatId : null;
+    if (processing) processingChats.add(chatId);
+    else processingChats.delete(chatId);
     
     // Only update UI if the affected chat is the one currently visible
     if (chatId === currentChatId) {
@@ -346,6 +347,7 @@ function setProcessingState(processing, chatId = currentChatId) {
             stopBtn.style.display = 'none';
         }
     }
+    renderChatList(); // Update dots or indicators in sidebar
 }
 
 function openSidebar() { sidebar.classList.add('open'); sidebarOverlay.classList.add('active'); }
@@ -368,10 +370,9 @@ function saveChats() {
 
 function createNewChat() {
     const newChat = { id: Date.now().toString(), title: "New Chat", messages: [], model: chatModelSelect.value, createdAt: new Date().toISOString() };
-    if (isProcessing) stopGeneration(); // Stop previous before starting fresh
     chats.unshift(newChat);
     currentChatId = newChat.id;
-    setupAI(); // Ensure model object exists for startChat
+    setupAI();
     if (genAI && currentAiModel) chatSessions[currentChatId] = currentAiModel.startChat({ history: [] });
     saveChats();
     renderChatList();
@@ -384,9 +385,8 @@ function switchChat(id) {
     renderChatList();
     renderCurrentChat();
     
-    // Update UI state for processing buttons
-    const processingThisChat = (isProcessing && currentProcessingChatId === currentChatId);
-    if (processingThisChat) {
+    // Update UI state based on whether THIS chat is processing
+    if (processingChats.has(id)) {
         sendBtn.style.display = 'none';
         stopBtn.style.display = 'flex';
     } else {
@@ -455,7 +455,8 @@ function renderChatList() {
     chats.forEach(chat => {
         const tab = document.createElement('div');
         tab.className = `chat-tab ${chat.id === currentChatId ? 'active' : ''}`;
-        tab.innerHTML = `<span class="chat-tab-title">${chat.title}</span><button class="delete-chat-btn" title="Delete session">✕</button>`;
+        const status = processingChats.has(chat.id) ? '<span class="pulse-dot"></span>' : '';
+        tab.innerHTML = `${status}<span class="chat-tab-title">${chat.title}</span><button class="delete-chat-btn" title="Delete session">✕</button>`;
         tab.addEventListener('click', () => switchChat(chat.id));
         tab.querySelector('.delete-chat-btn').addEventListener('click', (e) => deleteChat(chat.id, e));
         chatListEl.appendChild(tab);
@@ -1240,8 +1241,10 @@ function mapModelName(name) {
     if (!name) return "gemini-1.5-flash-latest";
     let normalized = name.toLowerCase().trim();
     if (normalized === "think-tank") return "think-tank";
+    if (normalized.includes("nano-banana-pro") || normalized.includes("gemini-3-pro-image")) return "gemini-3-pro-image-preview";
+    if (normalized.includes("nano-banana-2") || normalized.includes("gemini-3.1-flash-image")) return "gemini-3.1-flash-image-preview";
     if (normalized.includes("3.1-pro")) return "gemini-3.1-pro-preview";
-    if (normalized.includes("3.0-flash")) return "gemini-3.0-flash-preview";
+    if (normalized.includes("3-flash") || normalized.includes("3.0-flash")) return "gemini-3-flash-preview";
     if (normalized.includes("2.0-flash")) return "gemini-2.0-flash";
     if (normalized.includes("3.1-pro-preview")) return "gemini-3.1-pro-preview";
     if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
@@ -1441,7 +1444,7 @@ function scrollToBottom() { chatHistory.scrollTop = chatHistory.scrollHeight; }
 async function handleSend() {
     const text = chatInput.value.trim();
     const targetChatId = currentChatId;
-    if (!text && queuedMessages.length === 0) return;
+    if (!text && (!queuedMessages[targetChatId] || queuedMessages[targetChatId].length === 0)) return;
 
     if (!currentAiModel) {
         alert("Please map a Gemini Key in Settings first.");
@@ -1449,13 +1452,13 @@ async function handleSend() {
         return;
     }
 
-    if (isProcessing) {
-        queuedMessages.push(text);
+    if (processingChats.has(targetChatId)) {
+        if (!queuedMessages[targetChatId]) queuedMessages[targetChatId] = [];
+        queuedMessages[targetChatId].push(text);
         appendMessageOnly('user', text);
         addMessageToCurrent('user', text);
         chatInput.value = '';
         chatInput.style.height = 'auto';
-        stopGeneration();
         return;
     }
 
@@ -1470,9 +1473,9 @@ async function handleSend() {
         currentAttachedImage = null;
         imagePreviewContainer.style.display = 'none';
         imageInput.value = '';
-    } else if (queuedMessages.length > 0) {
-        messageToSend = queuedMessages.join('\n');
-        queuedMessages = [];
+    } else if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) {
+        messageToSend = queuedMessages[targetChatId].join('\n');
+        queuedMessages[targetChatId] = [];
     }
     
     chatInput.value = '';
@@ -1497,8 +1500,8 @@ async function handleSend() {
     let session = null;
     
     if (model === "think-tank") {
-        currentModelName = "gemini-3.0-flash-preview"; // Start with Flash 3.0 Preview
-        console.log("Think Tank Initialized: Starting with Flash 3.0 Preview");
+        currentModelName = "gemini-3-flash-preview"; // Start with Gemini 3 Flash Preview as shown in Google AI Studio
+        console.log("Think Tank Initialized: Starting with Gemini 3 Flash Preview");
     }
     
     const getSessionWithModel = (mName) => {
@@ -1518,8 +1521,8 @@ async function handleSend() {
         return genModel.startChat({ history });
     };
 
-    session = (model === "think-tank") ? getSessionWithModel(currentModelName) : getChatSession();
-    currentAbortController = new AbortController();
+    const targetAbortController = new AbortController();
+    abortControllers.set(targetChatId, targetAbortController);
 
     try {
         const parts = [{ text: messageToSend }];
@@ -1542,7 +1545,7 @@ async function handleSend() {
         const EDIT_TOOLS = new Set(['patch_file','patch_file_multi','write_file']);
 
         while (true) {
-            if (currentAbortController.signal.aborted) break;
+            if (targetAbortController.signal.aborted) break;
             if (toolDepth >= MAX_TOOL_DEPTH) {
                 appendMessageOnly('system', `⛔ Max tool depth (${MAX_TOOL_DEPTH}) reached without completing the task. Please clarify what you need or try a more targeted approach.`);
                 break;
@@ -1575,7 +1578,7 @@ async function handleSend() {
                         chatHistory.appendChild(upgradeNotice);
                     }
 
-                    result = await session.sendMessage(currentParts, { signal: currentAbortController.signal });
+                    result = await session.sendMessage(currentParts, { signal: targetAbortController.signal });
                     response = result.response;
                     break;
                 } catch (err) {
@@ -1619,7 +1622,7 @@ async function handleSend() {
             }
 
             const toolPromises = functionCalls.map(async (call, index) => {
-                if (currentAbortController.signal.aborted) return null;
+                if (targetAbortController.signal.aborted) return null;
                 const toolDiv = appendToolCall(aiMsgNode, call.name, call.args);
                 
                 const sig = makeSignature(call.name, call.args);
@@ -1680,13 +1683,13 @@ async function handleSend() {
         }
     } finally {
         releaseWakeLock();
-        currentAbortController = null;
+        abortControllers.delete(targetChatId);
         setProcessingState(false, targetChatId);
         if (aiMsgNode) {
             const finalContent = aiMsgNode.querySelector('.message-content').innerText;
             sendCompletionNotification(finalContent);
         }
-        if (queuedMessages.length > 0) handleSend();
+        if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) handleSend();
     }
 }
 
@@ -1728,10 +1731,13 @@ async function callOpenAICompatibleModel(provider, model, message, image, loadin
     const key = provider === 'deepseek' ? deepseekKeyInput.value.trim() : minimaxKeyInput.value.trim();
     const endpoint = provider === 'deepseek' ? "https://api.deepseek.com/v1/chat/completions" : "https://api.minimax.chat/v1/text/chatcompletion_v2";
     
-    if (!key) { alert(`Please enter your ${provider} key in settings.`); loading.remove(); setProcessingState(false); return; }
+    if (!key) { alert(`Please enter your ${provider} key in settings.`); loading.remove(); setProcessingState(false, currentChatId); return; }
 
-    currentAbortController = new AbortController();
-    const chat = chats.find(c => c.id === currentChatId);
+    const targetChatId = currentChatId;
+    const targetAbortController = new AbortController();
+    abortControllers.set(targetChatId, targetAbortController);
+
+    const chat = chats.find(c => c.id === targetChatId);
     
     const messages = [];
     messages.push({ role: 'system', content: `You are GitChat AI, an Elite Autonomous Software Engineer. 
@@ -1809,7 +1815,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
         const EDIT_TOOLS = new Set(['patch_file','patch_file_multi','write_file']);
 
         while(true) {
-            if (currentAbortController.signal.aborted) break;
+            if (targetAbortController.signal.aborted) break;
             if (toolDepth >= MAX_TOOL_DEPTH) {
                 appendMessageOnly('system', "Maximum tool depth reached. Stopping to prevent loop.");
                 break;
@@ -1825,7 +1831,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
                         body: JSON.stringify({ model, messages, tools, tool_choice: "auto" }),
-                        signal: currentAbortController.signal
+                        signal: targetAbortController.signal
                     });
                     if (res.ok) break;
                     if (res.status === 429 || res.status >= 500) {
@@ -1904,11 +1910,13 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
         appendMessageOnly('ai', `Error: ${e.message}`);
     } finally {
         loading.remove();
-        setProcessingState(false);
+        abortControllers.delete(targetChatId);
+        setProcessingState(false, targetChatId);
         releaseWakeLock();
         if (aiMsgNode) {
             sendCompletionNotification("Task finished.");
         }
+        if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) handleSend();
     }
 }
 
