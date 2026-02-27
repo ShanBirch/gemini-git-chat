@@ -48,6 +48,7 @@ let githubHeaders = {};
 let currentRepo = "";
 let currentBranch = "main";
 let processingChats = new Set();
+let activeAiNodes = new Map();
 let abortControllers = new Map();
 let queuedMessages = {}; // chatId -> array
 let stagedFiles = new Map(); // path -> content
@@ -330,6 +331,7 @@ function stopGeneration(chatId = currentChatId) {
     if (controller) {
         controller.abort();
         abortControllers.delete(chatId);
+        setProcessingState(false, chatId); // Force processing state off
     }
 }
 
@@ -378,6 +380,11 @@ function createNewChat() {
     saveChats();
     renderChatList();
     renderCurrentChat();
+    
+    // Ensure UI is reset for the new chat
+    sendBtn.style.display = 'flex';
+    stopBtn.style.display = 'none';
+    stopBtn.style.background = '';
 }
 
 function switchChat(id) {
@@ -390,6 +397,7 @@ function switchChat(id) {
     if (processingChats.has(id)) {
         sendBtn.style.display = 'none';
         stopBtn.style.display = 'flex';
+        stopBtn.style.background = 'var(--error)';
     } else {
         sendBtn.style.display = 'flex';
         stopBtn.style.display = 'none';
@@ -517,6 +525,15 @@ function renderCurrentChat() {
                 }
             });
         });
+
+        // Add back the active processing node if it exists for this chat
+        if (processingChats.has(currentChatId)) {
+            const activeNode = activeAiNodes.get(currentChatId);
+            if (activeNode) {
+                chatHistory.appendChild(activeNode);
+            }
+        }
+        
         scrollToBottom();
     }
 }
@@ -1410,40 +1427,6 @@ function setupAI() {
 }
 
 
-function buildSanitizedHistory(messages) {
-    if (!messages || messages.length === 0) return [];
-    
-    const sanitized = [];
-    let lastRole = null;
-    
-    messages.forEach(m => {
-        const role = (m.role === 'ai' || m.role === 'model') ? 'model' : 'user';
-        const parts = [];
-        
-        // 1. Text part (required)
-        parts.push({ text: m.content || " " });
-        
-        // 2. Image part (optional)
-        if (m.image && m.role === 'user') {
-            parts.unshift({
-                inlineData: { mimeType: m.image.mimeType, data: m.image.data }
-            });
-        }
-        
-        if (role === lastRole) {
-            // Merge consecutive same-role parts (SDK requirement)
-            sanitized[sanitized.length - 1].parts.push(...parts);
-        } else {
-            sanitized.push({ role, parts });
-            lastRole = role;
-        }
-    });
-
-    // Final SDK Check: History must alternate User/Model and start with User or Model.
-    // However, if it starts with model it might fail on some SDK versions.
-    return sanitized;
-}
-
 function getChatSession(chatId = currentChatId) {
     if (!chatSessions[chatId]) {
         if (!currentAiModel) {
@@ -1451,15 +1434,29 @@ function getChatSession(chatId = currentChatId) {
             return null;
         }
         const chat = chats.find(c => c.id === chatId);
-        const history = buildSanitizedHistory(chat ? chat.messages : []);
+        const history = chat ? chat.messages.map(m => {
+            const parts = [];
+            if (m.content) parts.push({ text: m.content });
+            else parts.push({ text: " " }); // Fallback for SDK iterator
+            
+            if (m.image) {
+                parts.unshift({
+                    inlineData: { mimeType: m.image.mimeType, data: m.image.data }
+                });
+            }
+            return {
+                role: m.role === 'ai' ? 'model' : 'user',
+                parts: parts
+            };
+        }) : [];
         chatSessions[chatId] = currentAiModel.startChat({ history });
     }
     return chatSessions[chatId];
 }
 
 // --- UI Rendering ---
-function appendMessageOnly(role, content) {
-    if (chatHistory.querySelector('.empty-state')) chatHistory.innerHTML = '';
+function appendMessageOnly(role, content, chatId = currentChatId) {
+    if (chatId === currentChatId && chatHistory.querySelector('.empty-state')) chatHistory.innerHTML = '';
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
     const contentDiv = document.createElement('div');
@@ -1482,8 +1479,10 @@ function appendMessageOnly(role, content) {
         contentDiv.appendChild(textSpan);
     }
     msgDiv.appendChild(contentDiv);
-    chatHistory.appendChild(msgDiv);
-    scrollToBottom();
+    if (chatId === currentChatId) {
+        chatHistory.appendChild(msgDiv);
+        scrollToBottom();
+    }
     return msgDiv;
 }
 
@@ -1549,8 +1548,8 @@ async function handleSend() {
     if (processingChats.has(targetChatId)) {
         if (!queuedMessages[targetChatId]) queuedMessages[targetChatId] = [];
         queuedMessages[targetChatId].push(text);
-        appendMessageOnly('user', text);
-        addMessageToCurrent('user', text);
+        appendMessageOnly('user', text, targetChatId);
+        addMessageToChat(targetChatId, 'user', text);
         chatInput.value = '';
         chatInput.style.height = 'auto';
         return;
@@ -1562,8 +1561,8 @@ async function handleSend() {
     let imageDataToSend = currentAttachedImage;
 
     if (text || currentAttachedImage) {
-        appendMessageOnly('user', text);
-        addMessageToCurrent('user', text);
+        appendMessageOnly('user', text, targetChatId);
+        addMessageToChat(targetChatId, 'user', text);
         currentAttachedImage = null;
         imagePreviewContainer.style.display = 'none';
         imageInput.value = '';
@@ -1578,7 +1577,11 @@ async function handleSend() {
     const loadingDiv = document.createElement('div');
     loadingDiv.className = `message ai thinking-msg`;
     loadingDiv.innerHTML = `<div class="message-content" style="opacity: 0.8; font-style: italic;">GitChat AI is thinking...</div>`;
-    chatHistory.appendChild(loadingDiv);
+    if (targetChatId === currentChatId) {
+        chatHistory.appendChild(loadingDiv);
+        scrollToBottom();
+    }
+    activeAiNodes.set(targetChatId, loadingDiv);
 
     const chat = chats.find(c => c.id === currentChatId);
     if (!chat) { loadingDiv.remove(); return; }
@@ -1607,7 +1610,10 @@ async function handleSend() {
             safetySettings: config.safetySettings
         });
         const chatObj = chats.find(c => c.id === mId);
-        const history = buildSanitizedHistory(chatObj ? chatObj.messages : []);
+        const history = chatObj ? chatObj.messages.map(m => ({
+            role: m.role === 'ai' ? 'model' : 'user',
+            parts: [{ text: m.content || " " }] // Fix 't is not iterable'
+        })) : [];
         return genModel.startChat({ history });
     };
 
@@ -1718,14 +1724,24 @@ async function handleSend() {
 
                 loadingDiv.remove();
                 if (targetChatId === currentChatId) {
-                    if (!aiMsgNode) {
-                        aiMsgNode = appendMessageOnly('ai', textResponse || "...");
+                    if (!aiMsgNode || !document.body.contains(aiMsgNode)) {
+                        aiMsgNode = appendMessageOnly('ai', textResponse || "...", targetChatId);
+                        activeAiNodes.set(targetChatId, aiMsgNode);
                     } else if (textResponse) {
                         const contentDiv = aiMsgNode.querySelector('.message-content');
                         contentDiv.innerHTML += marked.parse(textResponse);
                     }
                     
                     if (innerThought) {
+                        appendReasoningStep(aiMsgNode, 'thought', `Thought for ${thoughtDuration}s`, 'Reasoning', innerThought);
+                    }
+                } else {
+                    // Update detached node if it exists
+                    if (aiMsgNode && textResponse) {
+                        const contentDiv = aiMsgNode.querySelector('.message-content');
+                        contentDiv.innerHTML += marked.parse(textResponse);
+                    }
+                    if (aiMsgNode && innerThought) {
                         appendReasoningStep(aiMsgNode, 'thought', `Thought for ${thoughtDuration}s`, 'Reasoning', innerThought);
                     }
                 }
@@ -1742,9 +1758,13 @@ async function handleSend() {
             else if (roundIsSearchOnly) { searchOnlyStreak++; }
 
             toolDepth++;
-            loadingDiv.remove();
+            const currentLoading = activeAiNodes.get(targetChatId);
+            if (currentLoading && currentLoading.classList.contains('thinking-msg')) {
+                currentLoading.remove();
+            }
             if (!aiMsgNode || !aiMsgNode.classList.contains('ai') || aiMsgNode.innerHTML.includes('thinking')) {
-                aiMsgNode = appendMessageOnly('ai', "Gathering data...");
+                aiMsgNode = appendMessageOnly('ai', "Gathering data...", targetChatId);
+                activeAiNodes.set(targetChatId, aiMsgNode);
             }
 
             const toolPromises = functionCalls.map(async (call, index) => {
@@ -1819,14 +1839,15 @@ async function handleSend() {
     } catch (e) {
         loadingDiv.remove();
         if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
-            appendMessageOnly('system', 'Generation stopped.');
+            appendMessageOnly('system', 'Generation stopped.', targetChatId);
         } else {
             console.error("Full AI Error:", e);
-            appendMessageOnly('ai', e.message);
+            appendMessageOnly('ai', e.message, targetChatId);
         }
     } finally {
         releaseWakeLock();
         abortControllers.delete(targetChatId);
+        activeAiNodes.delete(targetChatId);
         setProcessingState(false, targetChatId);
         if (aiMsgNode) {
             const finalContent = aiMsgNode.querySelector('.message-content').innerText;
