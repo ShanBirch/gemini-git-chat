@@ -1410,6 +1410,40 @@ function setupAI() {
 }
 
 
+function buildSanitizedHistory(messages) {
+    if (!messages || messages.length === 0) return [];
+    
+    const sanitized = [];
+    let lastRole = null;
+    
+    messages.forEach(m => {
+        const role = (m.role === 'ai' || m.role === 'model') ? 'model' : 'user';
+        const parts = [];
+        
+        // 1. Text part (required)
+        parts.push({ text: m.content || " " });
+        
+        // 2. Image part (optional)
+        if (m.image && m.role === 'user') {
+            parts.unshift({
+                inlineData: { mimeType: m.image.mimeType, data: m.image.data }
+            });
+        }
+        
+        if (role === lastRole) {
+            // Merge consecutive same-role parts (SDK requirement)
+            sanitized[sanitized.length - 1].parts.push(...parts);
+        } else {
+            sanitized.push({ role, parts });
+            lastRole = role;
+        }
+    });
+
+    // Final SDK Check: History must alternate User/Model and start with User or Model.
+    // However, if it starts with model it might fail on some SDK versions.
+    return sanitized;
+}
+
 function getChatSession(chatId = currentChatId) {
     if (!chatSessions[chatId]) {
         if (!currentAiModel) {
@@ -1417,21 +1451,7 @@ function getChatSession(chatId = currentChatId) {
             return null;
         }
         const chat = chats.find(c => c.id === chatId);
-        const history = chat ? chat.messages.map(m => {
-            const parts = [];
-            if (m.content) parts.push({ text: m.content });
-            else parts.push({ text: " " }); // Fallback for SDK iterator
-            
-            if (m.image) {
-                parts.unshift({
-                    inlineData: { mimeType: m.image.mimeType, data: m.image.data }
-                });
-            }
-            return {
-                role: m.role === 'ai' ? 'model' : 'user',
-                parts: parts
-            };
-        }) : [];
+        const history = buildSanitizedHistory(chat ? chat.messages : []);
         chatSessions[chatId] = currentAiModel.startChat({ history });
     }
     return chatSessions[chatId];
@@ -1587,10 +1607,7 @@ async function handleSend() {
             safetySettings: config.safetySettings
         });
         const chatObj = chats.find(c => c.id === mId);
-        const history = chatObj ? chatObj.messages.map(m => ({
-            role: m.role === 'ai' ? 'model' : 'user',
-            parts: [{ text: m.content || " " }] // Fix 't is not iterable'
-        })) : [];
+        const history = buildSanitizedHistory(chatObj ? chatObj.messages : []);
         return genModel.startChat({ history });
     };
 
