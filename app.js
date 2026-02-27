@@ -26,6 +26,7 @@ const enableSyncBtn = document.getElementById('enable-sync');
 const deepseekKeyInput = document.getElementById('deepseek-key');
 const minimaxKeyInput = document.getElementById('minimax-key');
 const productionUrlInput = document.getElementById('production-url');
+const localServerUrlInput = document.getElementById('local-server-url');
 const planningModeToggle = document.getElementById('planning-mode-toggle');
 const indexRepoBtn = document.getElementById('index-repo-btn');
 
@@ -83,25 +84,31 @@ function debounce(func, wait) {
 // --- Mobile Background 'Stay-Alive' Hack ---
 // Playing silent audio prevents mobile browsers from suspending JS in the background.
 const BackgroundKeeper = {
-    audioCtx: null,
-    osc: null,
+    audioEl: null,
     start() {
         try {
-            if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
-            this.osc = this.audioCtx.createOscillator();
-            const gain = this.audioCtx.createGain();
-            gain.gain.value = 0.001; // Inaudible
-            this.osc.connect(gain);
-            gain.connect(this.audioCtx.destination);
-            this.osc.start();
+            if (!this.audioEl) {
+                this.audioEl = new Audio();
+                // 1-second silent WAV base64
+                this.audioEl.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+                this.audioEl.loop = true;
+                this.audioEl.volume = 0.01;
+                // Add MediaSession so it shows on lock screen
+                if ('mediaSession' in navigator) {
+                    navigator.mediaSession.metadata = new MediaMetadata({
+                        title: 'GitChat AI is Thinking...',
+                        artist: 'Running Tasks',
+                        album: 'Background Mode Active'
+                    });
+                }
+            }
+            this.audioEl.play().catch(e => console.warn("Background audio play failed:", e));
             console.log("Background Stay-Alive Active");
         } catch (e) { console.warn("Background Stay-Alive failed:", e); }
     },
     stop() {
-        if (this.osc) {
-            try { this.osc.stop(); } catch(e){}
-            this.osc = null;
+        if (this.audioEl) {
+            try { this.audioEl.pause(); } catch(e){}
         }
     }
 };
@@ -123,7 +130,8 @@ async function init() {
 
 async function checkLocalTerminal() {
     try {
-        const res = await fetch('http://localhost:3000/api/status');
+        const serverUrl = (localServerUrlInput ? localServerUrlInput.value.trim() : null) || 'http://localhost:3000';
+        const res = await fetch(`${serverUrl}/api/status`);
         if (res.ok) {
             localTerminalEnabled = true;
             const statusEl = document.getElementById('local-status');
@@ -577,10 +585,29 @@ async function generateAutoTitle(chat) {
 
 // Settings Management
 async function loadSettings() {
-    // Fetch configuration from secure proxy
+    // 1. Load from local storage first
+    geminiKeyInput.value = localStorage.getItem('gitchat_gemini_key') || '';
+    githubTokenInput.value = localStorage.getItem('gitchat_github_token') || '';
+    deepseekKeyInput.value = localStorage.getItem('gitchat_deepseek_key') || '';
+    minimaxKeyInput.value = localStorage.getItem('gitchat_minimax_key') || '';
+    productionUrlInput.value = localStorage.getItem('gitchat_production_url') || '';
+    localServerUrlInput.value = localStorage.getItem('gitchat_local_server_url') || '';
+    githubBranchInput.value = localStorage.getItem('gitchat_github_branch') || 'main';
+    supabaseUrlInput.value = localStorage.getItem('gitchat_supabase_url') || '';
+    supabaseKeyInput.value = localStorage.getItem('gitchat_supabase_key') || '';
+    
+    // Auto-setup AI and Github if present locally
+    if (geminiKeyInput.value) setupAI();
+    if (githubTokenInput.value) {
+        fetchUserRepos(localStorage.getItem('gitchat_github_repo') || '');
+        testGitHubConnection();
+    }
+    if (supabaseUrlInput.value && supabaseKeyInput.value) await initSupabase(true);
+
+    // 2. Fetch configuration from secure proxy (Netlify Identity)
     try {
         const user = window.netlifyIdentity.currentUser();
-        if (!user) return;
+        if (!user) return; // If not logged in, just use local storage
 
         const token = await user.jwt();
         const res = await fetch('/.netlify/functions/get-config', {
@@ -591,11 +618,12 @@ async function loadSettings() {
             const config = await res.json();
             console.log("Config loaded successfully:", Object.keys(config).filter(k => !!config[k]));
             
-            geminiKeyInput.value = config.GEMINI_API_KEY || '';
-            githubTokenInput.value = config.GITHUB_TOKEN || '';
-            supabaseUrlInput.value = config.SUPABASE_URL || '';
-            supabaseKeyInput.value = config.SUPABASE_KEY || '';
-            productionUrlInput.value = config.PRODUCTION_URL || '';
+            // Only override if Netlify config exists and local is empty
+            if (config.GEMINI_API_KEY && !geminiKeyInput.value) geminiKeyInput.value = config.GEMINI_API_KEY;
+            if (config.GITHUB_TOKEN && !githubTokenInput.value) githubTokenInput.value = config.GITHUB_TOKEN;
+            if (config.SUPABASE_URL && !supabaseUrlInput.value) supabaseUrlInput.value = config.SUPABASE_URL;
+            if (config.SUPABASE_KEY && !supabaseKeyInput.value) supabaseKeyInput.value = config.SUPABASE_KEY;
+            if (config.PRODUCTION_URL && !productionUrlInput.value) productionUrlInput.value = config.PRODUCTION_URL;
             
             if (geminiKeyInput.value) setupAI();
             if (githubTokenInput.value) {
@@ -619,10 +647,12 @@ function saveSettings() {
     localStorage.setItem('gitchat_deepseek_key', deepseekKeyInput.value.trim());
     localStorage.setItem('gitchat_minimax_key', minimaxKeyInput.value.trim());
     localStorage.setItem('gitchat_production_url', productionUrlInput.value.trim());
+    localStorage.setItem('gitchat_local_server_url', localServerUrlInput.value.trim());
     settingsContent.classList.remove('active');
     setupAI();
     fetchUserRepos(githubRepoSelect.value);
     testGitHubConnection();
+    checkLocalTerminal();
     if (syncEnabled) pushSettingsToCloud();
 }
 
@@ -956,7 +986,8 @@ async function ghPatchFile(path, search, replace, commit_message) {
 async function ghRunTerminalCommand(command, cwd) {
     if (!localTerminalEnabled) return "Error: Local terminal is not connected. Run 'npm start' in the gemini-git-chat folder.";
     try {
-        const res = await fetch('http://localhost:3000/api/shell', {
+        const serverUrl = (localServerUrlInput ? localServerUrlInput.value.trim() : null) || 'http://localhost:3000';
+        const res = await fetch(`${serverUrl}/api/shell`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command, cwd })

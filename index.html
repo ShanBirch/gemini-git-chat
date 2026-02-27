@@ -117,6 +117,12 @@
                             <input type="url" id="production-url" placeholder="e.g. shanbotai.netlify.app">
                         </div>
 
+                        <div class="input-group">
+                            <label for="local-server-url"><span class="emoji">🖥️</span> Local Terminal URL</label>
+                            <input type="url" id="local-server-url" placeholder="http://localhost:3000">
+                            <div style="font-size: 0.7em; color: rgba(255,255,255,0.5); margin-top: 4px;">Run `npm start` on your PC. To use from a phone via HTTPS, use a tool like ngrok (e.g., https://xyz.ngrok.app).</div>
+                        </div>
+
                         <button id="save-settings" class="btn primary full-width">Connect & Save</button>
                         
                         <div class="repo-status" id="repo-status">
