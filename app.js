@@ -69,6 +69,15 @@ const fileCache = new Map();
 let chatSessions = {};
 let localTerminalEnabled = false;
 
+// --- Utilities ---
+function debounce(func, wait) {
+    let timeout;
+    return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func(...args), wait);
+    };
+}
+
 // --- Mobile Background 'Stay-Alive' Hack ---
 // Playing silent audio prevents mobile browsers from suspending JS in the background.
 const BackgroundKeeper = {
@@ -343,9 +352,11 @@ function loadChats() {
     else { currentChatId = chats[0].id; renderChatList(); renderCurrentChat(); }
 }
 
+const debouncedSync = debounce(() => pushChatsToCloud(), 3000);
+
 function saveChats() {
     localStorage.setItem('gitchat_sessions', JSON.stringify(chats));
-    if (syncEnabled) pushChatsToCloud(); // <-- Added this line
+    if (syncEnabled) debouncedSync();
 }
 
 function createNewChat() {
@@ -715,21 +726,30 @@ async function ghListFiles(path = "") {
     } catch (e) { return `Error: ${e.message}`; }
 }
 
+const pendingReads = new Map();
 async function ghReadFile(path) {
     if (fileCache.has(path)) return fileCache.get(path);
-    try {
-        const url = `https://api.github.com/repos/${currentRepo}/contents/${path}?ref=${currentBranch}`;
-        const res = await fetch(url, { headers: githubHeaders });
-        if (!res.ok) throw new Error(`${res.status}`);
-        const data = await res.json();
-        if (data.type !== 'file') return `Not a file.`;
-        const binaryString = atob(data.content.replace(/\s/g, ''));
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i=0; i<binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-        const content = new TextDecoder('utf-8').decode(bytes);
-        fileCache.set(path, content);
-        return content;
-    } catch (e) { return `Error: ${e.message}`; }
+    if (pendingReads.has(path)) return pendingReads.get(path);
+
+    const readPromise = (async () => {
+        try {
+            const url = `https://api.github.com/repos/${currentRepo}/contents/${path}?ref=${currentBranch}`;
+            const res = await fetch(url, { headers: githubHeaders });
+            if (!res.ok) throw new Error(`${res.status}`);
+            const data = await res.json();
+            if (data.type !== 'file') return `Not a file.`;
+            const binaryString = atob(data.content.replace(/\s/g, ''));
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i=0; i<binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+            const content = new TextDecoder('utf-8').decode(bytes);
+            fileCache.set(path, content);
+            return content;
+        } catch (e) { return `Error: ${e.message}`; }
+        finally { pendingReads.delete(path); }
+    })();
+
+    pendingReads.set(path, readPromise);
+    return readPromise;
 }
 
 async function ghViewFile(path, startLine, endLine) {
@@ -814,11 +834,13 @@ async function ghSearchCode(query) {
         
         const files = data.items.slice(0, 5).map(item => item.path);
         
-        // Auto-grep the top results so we return actual line numbers, not just file paths
+        // Auto-grep the top results in parallel so we return actual line numbers quickly
         let output = `Found in ${data.items.length} file(s). Top results with matching lines:\n\n`;
-        for (const path of files) {
-            const grepResult = await ghGrepSearch(path, query);
-            output += `📄 ${path}:\n${grepResult}\n\n`;
+        const grepPromises = files.map(path => ghGrepSearch(path, query).then(res => ({ path, res })));
+        const grepResults = await Promise.all(grepPromises);
+        
+        for (const { path, res } of grepResults) {
+            output += `📄 ${path}:\n${res}\n\n`;
         }
         output += `💡 Use view_file with the line numbers above to read context, then patch_file to edit.`;
         return output;
