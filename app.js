@@ -1290,15 +1290,22 @@ async function handleSend() {
 
         let aiMsgNode = null;
         let toolDepth = 0;
-        const MAX_TOOL_DEPTH = 100;
-        let hasEditted = false;
+        const MAX_TOOL_DEPTH = 35;
+        let hasEdited = false;
         let currentParts = parts;
-        let toolHistory = new Set();
+        let searchOnlyStreak = 0; // consecutive rounds with no patch/write
+        
+        // Normalize call signature: strip quotes/spaces so slight variations register as duplicates
+        const normalizeArg = (v) => String(v).toLowerCase().replace(/[\'"\s]/g, '');
+        const makeSignature = (name, args) => name + '-' + Object.values(args || {}).map(normalizeArg).join('|');
+        const toolHistory = new Map(); // signature -> call count
+        const SEARCH_TOOLS = new Set(['search_code','grep_search','list_files','get_repo_map','semantic_search','recall_memories']);
+        const EDIT_TOOLS = new Set(['patch_file','patch_file_multi','write_file']);
 
         while (true) {
             if (currentAbortController.signal.aborted) break;
             if (toolDepth >= MAX_TOOL_DEPTH) {
-                appendMessageOnly('system', "Maximum tool depth reached. Stopping to prevent loop.");
+                appendMessageOnly('system', `⛔ Max tool depth (${MAX_TOOL_DEPTH}) reached without completing the task. Please clarify what you need or try a more targeted approach.`);
                 break;
             }
 
@@ -1339,6 +1346,12 @@ async function handleSend() {
 
             if (!functionCalls || functionCalls.length === 0) break;
 
+            // Track whether this round has any edit tools
+            const roundHasEdit = functionCalls.some(c => EDIT_TOOLS.has(c.name));
+            const roundIsSearchOnly = functionCalls.every(c => SEARCH_TOOLS.has(c.name));
+            if (roundHasEdit) { hasEdited = true; searchOnlyStreak = 0; }
+            else if (roundIsSearchOnly) { searchOnlyStreak++; }
+
             toolDepth++;
             loadingDiv.remove();
             if (!aiMsgNode || !aiMsgNode.classList.contains('ai') || aiMsgNode.innerHTML.includes('thinking')) {
@@ -1349,26 +1362,45 @@ async function handleSend() {
                 if (currentAbortController.signal.aborted) return null;
                 const toolDiv = appendToolCall(aiMsgNode, call.name, call.args);
                 
-                const callSignature = `${call.name}-${JSON.stringify(call.args)}`;
+                const sig = makeSignature(call.name, call.args);
+                const sigCount = toolHistory.get(sig) || 0;
                 let resOutput;
                 
-                if (call.name !== 'get_build_status' && toolHistory.has(callSignature)) {
-                    resOutput = "SYSTEM WARNING: You have already called this exact tool with identical arguments recently. You are stuck in a loop. Try a different approach, view a different file, or stop and ask the user.";
+                // Block exact/near-duplicate calls (allow get_build_status repeat)
+                if (call.name !== 'get_build_status' && sigCount >= 1) {
+                    resOutput = `⛔ DUPLICATE CALL BLOCKED: You already called ${call.name} with these (or near-identical) arguments. Repeating it will not help. Try a completely different approach: use 'grep_search' on a specific file, or use 'patch_file' with your best guess.`;
                 } else {
-                    toolHistory.add(callSignature);
-                    if (call.name === 'write_file' || call.name === 'patch_file') hasEditted = true;
-                    resOutput = toolsMap[call.name] ? await toolsMap[call.name](call.args) : "Error";
+                    toolHistory.set(sig, sigCount + 1);
+                    if (EDIT_TOOLS.has(call.name)) hasEdited = true;
+                    resOutput = toolsMap[call.name] ? await toolsMap[call.name](call.args) : `Error: Unknown tool '${call.name}'`;
                 }
                 
                 markToolSuccess(toolDiv);
 
                 let prunedResult = resOutput;
                 if (typeof resOutput === 'string' && resOutput.length > 5000) {
-                    prunedResult = `[LARGE CONTENT PRUNED - Output is ${resOutput.length} characters]. I have read this content and it is in my internal context. Content starts: ${resOutput.substring(0, 500)}...`;
+                    prunedResult = `[LARGE CONTENT PRUNED - ${resOutput.length} chars]. Content starts:\n${resOutput.substring(0, 600)}...\n\n💡 Use view_file with a targeted line range, or grep_search to find specific content.`;
                 }
                 
-                if (toolDepth === 15 && !hasEditted && index === 0) {
-                    prunedResult += "\n\nSYSTEM NUDGE: You are over-exploring. You have gathered enough data. Form a hypothesis NOW and use 'patch_file' or 'write_file'. Do not make another search call.";
+                // Escalating nudges — only add to first tool result per round
+                if (index === 0) {
+                    if (toolDepth === 8 && !hasEdited) {
+                        prunedResult += `\n\n🟡 SYSTEM NUDGE (Turn ${toolDepth}): You've been exploring for a while. What is your plan? Name the file and line range you intend to patch.`;
+                    } else if (toolDepth === 15 && !hasEdited) {
+                        prunedResult += `\n\n🟠 SYSTEM NUDGE (Turn ${toolDepth}): STOP SEARCHING. You have enough context. Make your best guess and call patch_file NOW. You can fix mistakes afterward.`;
+                    } else if (toolDepth === 22 && !hasEdited) {
+                        prunedResult += `\n\n🔴 SYSTEM ALERT (Turn ${toolDepth}): You are in a search loop. DO NOT call any search tool again. Either: (1) call patch_file with your best attempt, or (2) respond with a text message explaining what you're stuck on.`;
+                    }
+                    
+                    // Hard block: too many search-only rounds
+                    if (searchOnlyStreak >= 6 && !hasEdited) {
+                        prunedResult += `\n\n🚫 HARD BLOCK: You have made ${searchOnlyStreak} consecutive search-only rounds with no edits. SEARCHING IS NOW BLOCKED. You must either call patch_file/patch_file_multi OR stop and ask the user for help. If you search again, explain why in a text response first.`;
+                    }
+                    
+                    // Force-stop approaching max depth
+                    if (toolDepth >= MAX_TOOL_DEPTH - 5 && !hasEdited) {
+                        prunedResult += `\n\n🚨 CRITICAL (Turn ${toolDepth}/${MAX_TOOL_DEPTH}): Approaching turn limit. Make an edit NOW or the session will end without completing the task.`;
+                    }
                 }
 
                 return { functionResponse: { name: call.name, response: { name: call.name, content: prunedResult } } };
