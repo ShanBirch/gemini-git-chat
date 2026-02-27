@@ -1663,7 +1663,7 @@ async function handleSend() {
 
         let aiMsgNode = null;
         let toolDepth = 0;
-        const MAX_TOOL_DEPTH = 35;
+        const MAX_TOOL_DEPTH = 100;
         let hasEdited = false;
         let currentParts = parts;
         let searchOnlyStreak = 0; // consecutive rounds with no patch/write
@@ -2000,7 +2000,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
     try {
         let toolHistory = new Map();
         let toolDepth = 0;
-        const MAX_TOOL_DEPTH = 35;
+        const MAX_TOOL_DEPTH = 100;
         let hasEdited = false;
         let aiMsgNode = null;
         let searchOnlyStreak = 0;
