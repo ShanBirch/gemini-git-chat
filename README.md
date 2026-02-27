@@ -1,14 +1,13 @@
-# 🚀 GitChat AI: The World's Best Mobile AI Coding Agent
-
-GitChat AI is an autonomous, browser-based software engineer designed for speed, mobility, and direct GitHub repo manipulation. No local setup, no Docker, no heavy IDEs—just open the URL on your phone or desktop and start building.
+# 🚀 Shanbot: The World's Best Mobile AI Coding Agent
+Shanbot is an autonomous, browser-based software engineer designed for speed, mobility, and direct GitHub repo manipulation. No local setup, no Docker, no heavy IDEs—just open the URL on your phone or desktop and start building.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Mobile Ready](https://img.shields.io/badge/mobile-certified-success.svg)
 ![AI Models](https://img.shields.io/badge/AI-Gemini%20|%20DeepSeek%20|%20MiniMax-blueviolet.svg)
 
-## 🌟 Why GitChat AI?
+## 🌟 Why Shanbot?
 
-Most AI agents are desktop-bound and heavy. GitChat AI is built for the **"Engineer on the move."** Whether you're at a cafe or on a train, you can perform full-scale repository refactors directly from your mobile browser.
+Most AI agents are desktop-bound and heavy. Shanbot is built for the **"Engineer on the move."** Whether you're at a cafe or on a train, you can perform full-scale repository refactors directly from your mobile browser.
 
 ### ✨ Key Features:
 - **📱 Mobile-First Design**: Optimized for touch, including Pull-to-Refresh and PWA support.
@@ -28,7 +27,7 @@ Most AI agents are desktop-bound and heavy. GitChat AI is built for the **"Engin
 ## 📱 Installation (PWA)
 
 To get the full native experience on mobile:
-1. Open GitChat AI in Safari (iOS) or Chrome (Android).
+1. Open Shanbot in Safari (iOS) or Chrome (Android).
 2. Tap the **Share** button (iOS) or **Menu** (Android).
 3. Select **"Add to Home Screen"**.
 4. Launch it from your home screen as a standalone app!

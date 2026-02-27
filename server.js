@@ -50,9 +50,9 @@ app.post('/api/shell', (req, res) => {
 
 app.listen(PORT, 'localhost', () => {
     console.log(`\n=================================================`);
-    console.log(`🚀 GitChat Local Server running at http://localhost:${PORT}`);
+    console.log(`🚀 Shanbot Local Server running at http://localhost:${PORT}`);
     console.log(`💻 OS: ${process.platform} | CWD: ${process.cwd()}`);
-    console.log(`🔧 Terminal access for GitChat is now ACTIVE.`);
+    console.log(`🔧 Terminal access for Shanbot is now ACTIVE.`);
     console.log(`=================================================\n`);
     console.log(`Press Ctrl+C to stop the server.\n`);
 });

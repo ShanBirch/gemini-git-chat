@@ -96,7 +96,7 @@ const BackgroundKeeper = {
                 // Add MediaSession so it shows on lock screen
                 if ('mediaSession' in navigator) {
                     navigator.mediaSession.metadata = new MediaMetadata({
-                        title: 'GitChat AI is Thinking...',
+                        title: 'Shanbot is Thinking...',
                         artist: 'Running Tasks',
                         album: 'Background Mode Active'
                     });
@@ -460,7 +460,7 @@ async function requestNotificationPermission() {
 
 function sendCompletionNotification(content) {
     if (notificationsEnabled && document.visibilityState === 'hidden') {
-        new Notification("✨ GitChat AI Task Complete", {
+        new Notification("✨ Shanbot Task Complete", {
             body: content.length > 100 ? content.substring(0, 100) + "..." : content,
             icon: "/icon.svg"
         });
@@ -495,7 +495,7 @@ function renderCurrentChat() {
     }
 
     if (chat.messages.length === 0) {
-        chatHistory.innerHTML = `<div class="empty-state"><h1>GitChat AI</h1><p>Your autonomous codebase agent. Connect your repository to get started.</p></div>`;
+        chatHistory.innerHTML = `<div class="empty-state"><h1>Shanbot</h1><p>Your autonomous codebase agent. Connect your repository to get started.</p></div>`;
     } else {
         chat.messages.forEach((msg, idx) => {
             const msgDiv = document.createElement('div');
@@ -1175,7 +1175,7 @@ async function ghWriteFile(path, content, commit_message) {
     return `Successfully STAGED changes for ${path}. These are now in the local buffer. Call 'push_to_github' when you have finished all your edits to commit everything at once.`;
 }
 
-async function ghPushToGithub(commitMessage = "Apply batched changes from GitChat AI") {
+async function ghPushToGithub(commitMessage = "Apply batched changes from Shanbot") {
     if (stagedFiles.size === 0) return "No staged changes to push.";
     
     try {
@@ -1352,9 +1352,9 @@ function getProvider(model) {
 // --- AI Integration ---
 function getAIConfig() {
     const isPlanning = planningModeToggle.checked;
-    const baseInstruction = `You are GitChat AI, an Elite Autonomous Software Engineer optimizing for speed, accuracy, and decisive action.
+    const baseInstruction = `You are Shanbot, an Elite Autonomous Software Engineer optimizing for speed, accuracy, and decisive action.
 Do not second-guess yourself unnecessarily.
-CRITICAL: When you perform a "System Upgrade" (improving GitChat's own code), increment the version number in 'index.html' (e.g. from v1.3.0 to v1.4.0).
+CRITICAL: When you perform a "System Upgrade" (improving Shanbot's own code), increment the version number in 'index.html' (e.g. from v1.3.0 to v1.4.0).
 ALWAYS wrap your internal reasoning, research plan, or logical steps in <thought>...</thought> tags before choosing a tool or responding. This makes your brain transparent to the user.
 Repo: '${currentRepo}' | Branch: '${currentBranch}'.`;
 
@@ -1607,7 +1607,7 @@ async function handleSend() {
 
     const loadingDiv = document.createElement('div');
     loadingDiv.className = `message ai thinking-msg`;
-    loadingDiv.innerHTML = `<div class="message-content" style="opacity: 0.8; font-style: italic;">GitChat AI is thinking...</div>`;
+    loadingDiv.innerHTML = `<div class="message-content" style="opacity: 0.8; font-style: italic;">Shanbot is thinking...</div>`;
     if (targetChatId === currentChatId) {
         chatHistory.appendChild(loadingDiv);
         scrollToBottom();
@@ -1701,7 +1701,7 @@ async function handleSend() {
                     // THINK TANK UPGRADE: If we've started editing or reached a depth threshold, switch to Pro 3.1 Preview
                     if (model === "think-tank" && currentModelName !== "gemini-3.1-pro-preview" && (hasEdited || toolDepth >= 4)) {
                         console.log("Think Tank Upgrade: Switching to Gemini 3.1 Pro Preview for implementation phase.");
-                        const history = session.getHistory();
+                        const history = await session.getHistory();
                         currentModelName = "gemini-3.1-pro-preview";
                         const config = getAIConfig();
                         const proModel = genAI.getGenerativeModel({ 
@@ -1936,12 +1936,12 @@ async function callOpenAICompatibleModel(provider, model, message, image, loadin
     const chat = chats.find(c => c.id === targetChatId);
     
     const messages = [];
-    messages.push({ role: 'system', content: `You are GitChat AI, an Elite Autonomous Software Engineer. 
+    messages.push({ role: 'system', content: `You are Shanbot, an Elite Autonomous Software Engineer. 
 GOAL: Ship working code as fast as possible. 
 CRITICAL: BIAS FOR ACTION. If you search more than 7 times without coding, you are over-analyzing. STOP and ask for help.
 CRITICAL: Once you find a file that looks relevant, STOP searching and START coding with 'patch_file'.
 CRITICAL: Avoid getting stuck in tool loops.
-CRITICAL: When you perform a "System Upgrade" (improving GitChat's own code), increment the version number in 'index.html'.
+CRITICAL: When you perform a "System Upgrade" (improving Shanbot's own code), increment the version number in 'index.html'.
 CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_file' for exploration.` });
 
     // Add history
