@@ -291,12 +291,22 @@ body {
     margin: 4px 0; opacity: 0.8; animation: slideIn 0.3s ease-out;
 }
 .reasoning-step .icon { font-size: 0.9rem; }
-.reasoning-step.thought { font-style: italic; color: var(--accent); opacity: 1; margin: 12px 0; font-weight: 500; }
-.reasoning-step .badge { 
-    background: rgba(255,255,255,0.05); border: 1px solid var(--border);
-    padding: 1px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.75rem;
+.reasoning-step.thought { 
+    font-style: italic; color: var(--accent); opacity: 1; margin: 12px 0; font-weight: 500; cursor: pointer;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
 }
-.reasoning-step.edited .badge { color: var(--success); border-color: rgba(16, 185, 129, 0.3); }
+.reasoning-step.thought:hover .badge { background: rgba(99, 102, 241, 0.2); }
+.reasoning-step.thought .thought-content {
+    display: none; width: 100%;
+    background: rgba(0,0,0,0.2); border-left: 2px solid var(--accent);
+    padding: 10px 14px; margin-top: 8px; border-radius: 0 8px 8px 0;
+    font-size: 0.85rem; line-height: 1.5; color: var(--text-secondary);
+    font-style: normal; font-weight: 400; font-family: var(--font-main);
+    white-space: pre-wrap;
+}
+.reasoning-step.thought.expanded .thought-content { display: block; animation: slideDown 0.2s ease-out; }
+
+@keyframes slideDown { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
 
 @keyframes slideIn { from { opacity: 0; transform: translateX(-5px); } to { opacity: 1; transform: translateX(0); } }
 

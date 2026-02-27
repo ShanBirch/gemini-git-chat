@@ -1307,6 +1307,7 @@ function getAIConfig() {
     const baseInstruction = `You are GitChat AI, an Elite Autonomous Software Engineer optimizing for speed, accuracy, and decisive action.
 Do not second-guess yourself unnecessarily.
 CRITICAL: When you perform a "System Upgrade" (improving GitChat's own code), increment the version number in 'index.html' (e.g. from v1.3.0 to v1.4.0).
+ALWAYS wrap your internal reasoning, research plan, or logical steps in <thought>...</thought> tags before choosing a tool or responding. This makes your brain transparent to the user.
 Repo: '${currentRepo}' | Branch: '${currentBranch}'.`;
 
     // Full instructions
@@ -1466,7 +1467,7 @@ function appendMessageOnly(role, content) {
     return msgDiv;
 }
 
-function appendReasoningStep(msgDiv, type, text, badge = '') {
+function appendReasoningStep(msgDiv, type, text, badge = '', content = '') {
     const step = document.createElement('div');
     step.className = `reasoning-step ${type}`;
     let icon = '🧠';
@@ -1476,10 +1477,21 @@ function appendReasoningStep(msgDiv, type, text, badge = '') {
     if (type === 'terminal') icon = '💻';
 
     step.innerHTML = `
-        <span class="icon">${icon}</span>
-        <span class="text">${text}</span>
-        ${badge ? `<span class="badge">${badge}</span>` : ''}
+        <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
+            <span class="icon">${icon}</span>
+            <span class="text">${text}</span>
+            ${badge ? `<span class="badge">${badge}</span>` : ''}
+        </div>
+        ${content ? `<div class="thought-content">${content}</div>` : ''}
     `;
+
+    if (type === 'thought' && content) {
+        step.title = "Click to expand reasoning";
+        step.onclick = () => {
+            step.classList.toggle('expanded');
+        };
+    }
+
     msgDiv.querySelector('.message-content').appendChild(step);
     scrollToBottom();
 }
@@ -1668,20 +1680,34 @@ async function handleSend() {
                 }
             }
             
-            const textResponse = response.text();
+            let textResponse = response.text();
             const functionCalls = response.functionCalls();
+            
+            // --- NEW: Extract and display Thoughts ---
+            let innerThought = "";
+            const thoughtMatch = textResponse.match(/<thought>([\s\S]*?)<\/thought>/);
+            if (thoughtMatch) {
+                innerThought = thoughtMatch[1].trim();
+                textResponse = textResponse.replace(thoughtMatch[0], "").trim();
+            }
 
-            if (textResponse && textResponse.trim()) {
+            if (textResponse || innerThought) {
                 loadingDiv.remove();
                 if (targetChatId === currentChatId) {
                     if (!aiMsgNode) {
-                        aiMsgNode = appendMessageOnly('ai', textResponse);
-                    } else {
+                        aiMsgNode = appendMessageOnly('ai', textResponse || "...");
+                    } else if (textResponse) {
                         const contentDiv = aiMsgNode.querySelector('.message-content');
                         contentDiv.innerHTML += marked.parse(textResponse);
                     }
+                    
+                    if (innerThought) {
+                        const thoughtDuration = Math.round((Date.now() - lastRoundStartTime) / 1000);
+                        appendReasoningStep(aiMsgNode, 'thought', `Thought for ${thoughtDuration}s`, 'Reasoning', innerThought);
+                    }
                 }
-                addMessageToChat(targetChatId, 'ai', textResponse);
+                const fullHistoryStored = innerThought ? `<thought>${innerThought}</thought>\n${textResponse}` : textResponse;
+                addMessageToChat(targetChatId, 'ai', fullHistoryStored);
             }
 
             if (!functionCalls || functionCalls.length === 0) break;
