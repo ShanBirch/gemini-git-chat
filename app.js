@@ -1579,6 +1579,9 @@ async function handleSend() {
     const targetAbortController = new AbortController();
     abortControllers.set(targetChatId, targetAbortController);
 
+    session = (model === "think-tank") ? getSessionWithModel(currentModelName) : getChatSession();
+    if (!session) { loadingDiv.remove(); setProcessingState(false, targetChatId); return; }
+
     try {
         const parts = [{ text: messageToSend }];
         if (imageDataToSend) {
