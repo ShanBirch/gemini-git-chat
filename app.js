@@ -1208,11 +1208,12 @@ const toolsMap = {
 };
 
 function mapModelName(name) {
-    if (!name) return "gemini-3-flash";
+    if (!name) return "gemini-1.5-flash-latest";
     let normalized = name.toLowerCase().trim();
-    if (!normalized.startsWith("gemini-") && !normalized.includes("deepseek") && !normalized.includes("minimax")) {
-        normalized = "gemini-" + normalized;
-    }
+    if (normalized === "think-tank") return "think-tank";
+    if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
+    if (normalized.includes("3.0-flash")) return "gemini-3.0-flash";
+    if (normalized.includes("2.0-flash")) return "gemini-2.0-flash";
     if (normalized.includes("3.1-pro-preview")) return "gemini-3.1-pro-preview";
     if (normalized.includes("3.1-pro")) return "gemini-3.1-pro";
     if (normalized.includes("3-pro-preview") || normalized.includes("3.0-pro-preview")) return "gemini-3-pro-preview";
@@ -1460,7 +1461,32 @@ async function handleSend() {
         return;
     }
 
-    const session = getChatSession();
+    let currentModelName = model;
+    let session = null;
+    
+    if (model === "think-tank") {
+        currentModelName = "gemini-3.0-flash"; // Start with Flash
+        console.log("Think Tank Initialized: Starting with Flash 3.0");
+    }
+    
+    const getSessionWithModel = (mName) => {
+        const genModel = genAI.getGenerativeModel({ 
+            model: mName,
+            systemInstruction: isPlanning ? planningInstruction : executionInstruction,
+            tools: [{ functionDeclarations: geminiTools }],
+            safetySettings 
+        });
+        // We bypass the cache for Think Tank to allow model switching, 
+        // but we seed it with existing history
+        const chatObj = chats.find(c => c.id === currentChatId);
+        const history = chatObj ? chatObj.messages.map(m => ({
+            role: m.role === 'ai' ? 'model' : 'user',
+            parts: [{ text: m.content }]
+        })) : [];
+        return genModel.startChat({ history });
+    };
+
+    session = (model === "think-tank") ? getSessionWithModel(currentModelName) : getChatSession();
     currentAbortController = new AbortController();
 
     try {
@@ -1496,6 +1522,27 @@ async function handleSend() {
             
             while (retryCount <= maxRetries) {
                 try {
+                    // THINK TANK UPGRADE: If we've started editing or reached a depth threshold, switch to Pro
+                    if (model === "think-tank" && currentModelName !== "gemini-3.1-pro" && (hasEdited || toolDepth >= 4)) {
+                        console.log("Think Tank Upgrade: Switching to Gemini 3.1 Pro for implementation phase.");
+                        const history = session.getHistory();
+                        currentModelName = "gemini-3.1-pro";
+                        const proModel = genAI.getGenerativeModel({ 
+                            model: currentModelName,
+                            systemInstruction: isPlanning ? planningInstruction : executionInstruction,
+                            tools: [{ functionDeclarations: geminiTools }],
+                            safetySettings 
+                        });
+                        session = proModel.startChat({ history });
+                        
+                        // Notify user of model upgrade
+                        const upgradeNotice = document.createElement('div');
+                        upgradeNotice.className = 'system-notice';
+                        upgradeNotice.style = 'font-size: 0.7em; opacity: 0.6; text-align: center; margin: 8px 0; color: var(--accent);';
+                        upgradeNotice.innerHTML = `🧠 Think Tank: Upgrading to <strong>Gemini 3.1 Pro</strong> for execution...`;
+                        chatHistory.appendChild(upgradeNotice);
+                    }
+
                     result = await session.sendMessage(currentParts, { signal: currentAbortController.signal });
                     response = result.response;
                     break;
