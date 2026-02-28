@@ -1437,7 +1437,15 @@ Done. That's it. 3 steps max before you start editing.
         finalInstruction += `\n\n## LOCAL TERMINAL ACCESS (ACTIVE):\n- You have access to 'run_terminal_command'. Use it for tests, builds, or complex local tasks.\n- Project CWD: '${window.location.pathname}'.`;
     }
 
-    return { safetySettings, geminiTools, finalInstruction, planningInstruction, executionInstruction, isPlanning };
+    return {
+        isPlanning,
+        baseInstruction,
+        planningInstruction,
+        executionInstruction,
+        finalInstruction,
+        geminiTools,
+        safetySettings
+    };
 }
 
 function setupAI() {
@@ -2152,18 +2160,51 @@ async function callMiniMaxAnthropic(model, message, image, loading) {
     const chat = chats.find(c => c.id === targetChatId);
     if (!chat) return;
 
-    const system = `You are Shanbot, an Elite Autonomous Software Engineer...`;
+    const config = getAIConfig();
+    const system = config.finalInstruction;
+    
+    // ANTHROPIC HISTORY CLEANUP:
+    // 1. Roles must strictly alternate
+    // 2. Content cannot be empty
+    // 3. Must start with a 'user' message
+    const rawMessages = chat.messages.slice(0, -1); // Exclude the message we just added in handleSend
     const messages = [];
 
-    chat.messages.forEach(m => {
-        messages.push({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.content });
+    rawMessages.forEach((m, idx) => {
+        if (!m.content && !m.image) return; // Skip empty
+        const role = m.role === 'ai' ? 'assistant' : 'user';
+        
+        // Anthropic: Avoid consecutive roles by merging/skipping
+        if (messages.length > 0 && messages[messages.length - 1].role === role) {
+            if (typeof m.content === 'string') {
+                messages[messages.length - 1].content += "\n" + m.content;
+            }
+            return;
+        }
+        
+        messages.push({ role, content: m.content || " " });
     });
-    
-    const userContent = [{ type: 'text', text: message }];
-    if (image) {
-        userContent.unshift({ type: "image", source: { type: "base64", media_type: image.mimeType, data: image.data } });
+
+    // Ensure we start with user
+    if (messages.length > 0 && messages[0].role === 'assistant') {
+        messages.shift();
     }
-    messages.push({ role: 'user', content: userContent });
+    
+    // Add current turn (which was pop'd from history earlier to ensure it's the last one)
+    const currentContent = [{ type: 'text', text: message }];
+    if (image) {
+        currentContent.unshift({ type: "image", source: { type: "base64", media_type: image.mimeType, data: image.data } });
+    }
+    
+    // If the last message was also 'user', merge it
+    if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+        messages[messages.length - 1].content = [
+            ...(Array.isArray(messages[messages.length - 1].content) ? messages[messages.length - 1].content : [{type: 'text', text: messages[messages.length - 1].content}]),
+            ...currentContent
+        ];
+    } else {
+        messages.push({ role: 'user', content: currentContent });
+    }
     
     const anthropicTools = convertToAnthropicTools(getSharedTools());
 
@@ -2178,30 +2219,51 @@ async function callMiniMaxAnthropic(model, message, image, loading) {
             const localProxyUrl = (localServerUrlInput ? localServerUrlInput.value.trim() : null) || 'http://localhost:3000';
             const useProxy = localTerminalEnabled || window.location.hostname !== 'localhost';
             
-            const payload = { model, system, messages, tools: anthropicTools, max_tokens: 4096 };
+            const payload = { 
+                model, 
+                system, 
+                messages, 
+                tools: anthropicTools, 
+                max_tokens: 4096,
+                tool_choice: { type: "auto" }
+            };
+            
             let res;
+            const anthropicHeaders = { 
+                'anthropic-version': '2023-06-01',
+                'anthropic-beta': 'max-tokens-3-5-sonnet-2024-07-15' // MiniMax might need this for high token limits
+            };
             
             if (useProxy) {
                 const proxyUrl = localTerminalEnabled ? `${localProxyUrl}/api/ai-proxy` : `/.netlify/functions/proxy-ai`;
                 res = await fetch(proxyUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ endpoint, key, body: payload, headers: { 'anthropic-version': '2023-06-01' } }),
+                    body: JSON.stringify({ endpoint, key, body: payload, headers: anthropicHeaders }),
                     signal: targetAbortController.signal
                 });
             } else {
                 res = await fetch(endpoint, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'x-api-key': key, 
+                        'anthropic-version': '2023-06-01' 
+                    },
                     body: JSON.stringify(payload),
                     signal: targetAbortController.signal
                 });
             }
 
-            if (!res.ok) throw new Error(`MiniMax API Error ${res.status}`);
-            const data = await res.json();
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(`MiniMax API Error ${res.status}: ${JSON.stringify(errData)}`);
+            }
             
+            const data = await res.json();
             const content = data.content;
+            if (!content) throw new Error("Empty response from MiniMax.");
+
             const toolCalls = content.filter(c => c.type === 'tool_use');
             const thinking = content.find(c => c.type === 'thinking');
             const textResponse = content.find(c => c.type === 'text');
@@ -2231,15 +2293,15 @@ async function callMiniMaxAnthropic(model, message, image, loading) {
                 const toolName = call.name;
                 const toolArgs = call.input;
                 const toolDiv = appendToolCall(aiMsgNode, toolName, toolArgs);
-                const output = toolsMap[toolName] ? await toolsMap[toolName](toolArgs) : "Error";
+                const output = toolsMap[toolName] ? await toolsMap[toolName](toolArgs) : "Error executing tool.";
                 markToolSuccess(toolDiv);
                 
                 toolResults.push({
                     type: "tool_result",
                     tool_use_id: call.id,
-                    content: typeof output === 'string' && output.length > 5000 
-                        ? `[LARGE CONTENT PRUNED - ${output.length} characters]. Partial: ${output.substring(0, 500)}...` 
-                        : output
+                    content: typeof output === 'string' && output.length > 8000 
+                        ? `[LARGE CONTENT PRUNED - ${output.length} characters]. Partial: ${output.substring(0, 1000)}...` 
+                        : (output || "Success")
                 });
             }
 
@@ -2249,6 +2311,7 @@ async function callMiniMaxAnthropic(model, message, image, loading) {
         }
     } catch (e) {
         loading.remove();
+        console.error("MiniMax Error Details:", e);
         appendMessageOnly('ai', `Error: ${e.message}`);
     } finally {
         loading.remove();
