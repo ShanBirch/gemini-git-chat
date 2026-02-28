@@ -1339,13 +1339,14 @@ function mapModelName(name) {
     if (normalized.includes("nano-banana-2")) return "gemini-3.1-flash-image-preview";
     
     if (normalized.includes("deepseek")) return "deepseek-v3.2";
-    if (normalized.includes("minimax")) return "minimax-m2.5";
+    if (normalized.includes("minimax")) return "MiniMax-M2.5";
     return normalized;
 }
 
 function getProvider(model) {
-    if (model.includes("deepseek")) return "deepseek";
-    if (model.includes("minimax")) return "minimax";
+    const m = model.toLowerCase();
+    if (m.includes("deepseek")) return "deepseek";
+    if (m.includes("minimax")) return "minimax";
     return "google";
 }
 
@@ -1619,8 +1620,11 @@ async function handleSend() {
     const model = mapModelName(chat.model || chatModelSelect.value);
     const provider = getProvider(model);
 
-    if (provider !== 'google') {
+    if (provider === 'deepseek') {
         await callOpenAICompatibleModel(provider, model, messageToSend, imageDataToSend, loadingDiv);
+        return;
+    } else if (provider === 'minimax') {
+        await callMiniMaxAnthropic(model, messageToSend, imageDataToSend, loadingDiv);
         return;
     }
 
@@ -1922,38 +1926,7 @@ async function updateBuildStatus() {
     } catch (e) { console.log("Build status check failed"); }
 }
 
-async function callOpenAICompatibleModel(provider, model, message, image, loading) {
-    const key = provider === 'deepseek' ? deepseekKeyInput.value.trim() : minimaxKeyInput.value.trim();
-    const endpoint = provider === 'deepseek' ? "https://api.deepseek.com/v1/chat/completions" : "https://api.minimax.chat/v1/text/chatcompletion_v2";
-    
-    if (!key) { alert(`Please enter your ${provider} key in settings.`); loading.remove(); setProcessingState(false, currentChatId); return; }
-
-    const targetChatId = currentChatId;
-    const targetAbortController = new AbortController();
-    abortControllers.set(targetChatId, targetAbortController);
-
-    const chat = chats.find(c => c.id === targetChatId);
-    
-    const messages = [];
-    messages.push({ role: 'system', content: `You are Shanbot, an Elite Autonomous Software Engineer. 
-GOAL: Ship working code as fast as possible. 
-CRITICAL: BIAS FOR ACTION. If you search more than 7 times without coding, you are over-analyzing. STOP and ask for help.
-CRITICAL: Once you find a file that looks relevant, STOP searching and START coding with 'patch_file'.
-CRITICAL: Avoid getting stuck in tool loops.
-CRITICAL: When you perform a "System Upgrade" (improving Shanbot's own code), increment the version number in 'index.html'.
-CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_file' for exploration.` });
-
-    // Add history
-    chat.messages.forEach(m => {
-        messages.push({
-            role: m.role === 'ai' ? 'assistant' : 'user',
-            content: m.content
-        });
-    });
-    
-    // Add current message
-    messages.push({ role: 'user', content: message });
-    
+function getSharedTools() {
     const tools = [
         { type: "function", function: { name: "line_count", description: "FAST: Get line count + size without reading content. Use before view_file.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
         { type: "function", function: { name: "list_files", description: "List files in a directory.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
@@ -1969,31 +1942,62 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
         { type: "function", function: { name: "recall_memories", description: "Recall user history.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "search_code", description: "Search for specific code strings across the repo.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "read_file", description: "Read ENTIRE file. Slow on large files. Prefer view_file+grep_search.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
-        { type: "function", function: { name: "write_file", description: "Full file overwrite. Only for new/tiny files.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } }
+        { type: "function", function: { name: "write_file", description: "Full file overwrite. Only for new/tiny files.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } },
+        { type: "function", function: { name: "push_to_github", description: "Commits STAGED changes.", parameters: { type: "object", properties: { commit_message: { type: "string" } } } } }
     ];
-
     if (localTerminalEnabled) {
         tools.push({
             type: "function",
             function: {
                 name: "run_terminal_command",
-                description: "Run a command in the user's local terminal.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        command: { type: "string" },
-                        cwd: { type: "string" }
-                    },
-                    required: ["command"]
-                }
+                description: "Run local shell command.",
+                parameters: { type: "object", properties: { command: { type: "string" }, cwd: { type: "string" } }, required: ["command"] }
             }
         });
     }
+    return tools;
+}
 
+function convertToAnthropicTools(tools) {
+    return tools.map(t => ({
+        name: t.function.name,
+        description: t.function.description,
+        input_schema: t.function.parameters
+    }));
+}
 
-    if (localTerminalEnabled) {
-        messages[0].content += "\n\nLOCAL TERMINAL ACTIVE. Use 'run_terminal_command' to run shell commands or tests locally.";
-    }
+async function callOpenAICompatibleModel(provider, model, message, image, loading) {
+    const key = provider === 'deepseek' ? deepseekKeyInput.value.trim() : minimaxKeyInput.value.trim();
+    const endpoint = provider === 'deepseek' ? "https://api.deepseek.com/v1/chat/completions" : "https://api.minimax.chat/v1/text/chatcompletion_v2";
+    
+    if (!key) { alert(`Please enter your ${provider} key in settings.`); loading.remove(); setProcessingState(false, currentChatId); return; }
+
+    const targetChatId = currentChatId;
+    const targetAbortController = new AbortController();
+    abortControllers.set(targetChatId, targetAbortController);
+
+    const chat = chats.find(c => c.id === targetChatId);
+    
+    const messages = [];
+    messages.push({ role: 'system', content: `You are Shanbot, an Elite Autonomous Software Engineer. Repo: '${currentRepo}' | Branch: '${currentBranch}'.` });
+
+    // Add history
+    chat.messages.forEach(m => {
+        messages.push({
+            role: m.role === 'ai' ? 'assistant' : 'user',
+            content: m.content
+        });
+    });
+    
+    // Add current message
+    messages.push({ role: 'user', content: message });
+    
+    const tools = getSharedTools();
+    
+    const normalizeArg = (v) => String(v).toLowerCase().replace(/[\'"\s]/g, '');
+    const makeSignature = (name, args) => name + '-' + Object.values(args || {}).map(normalizeArg).join('|');
+    const SEARCH_TOOLS = new Set(['search_code','grep_search','list_files','get_repo_map','semantic_search','recall_memories']);
+    const EDIT_TOOLS = new Set(['patch_file','patch_file_multi','write_file']);
 
     requestWakeLock();
     try {
@@ -2132,6 +2136,124 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
             sendCompletionNotification("Task finished.");
         }
         if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) handleSend();
+    }
+}
+
+async function callMiniMaxAnthropic(model, message, image, loading) {
+    const key = minimaxKeyInput.value.trim();
+    const endpoint = "https://api.minimax.io/anthropic/v1/messages";
+    
+    if (!key) { alert("Please enter your MiniMax key."); loading.remove(); setProcessingState(false, currentChatId); return; }
+
+    const targetChatId = currentChatId;
+    const targetAbortController = new AbortController();
+    abortControllers.set(targetChatId, targetAbortController);
+
+    const chat = chats.find(c => c.id === targetChatId);
+    if (!chat) return;
+
+    const system = `You are Shanbot, an Elite Autonomous Software Engineer...`;
+    const messages = [];
+
+    chat.messages.forEach(m => {
+        messages.push({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.content });
+    });
+    
+    const userContent = [{ type: 'text', text: message }];
+    if (image) {
+        userContent.unshift({ type: "image", source: { type: "base64", media_type: image.mimeType, data: image.data } });
+    }
+    messages.push({ role: 'user', content: userContent });
+    
+    const anthropicTools = convertToAnthropicTools(getSharedTools());
+
+    requestWakeLock();
+    try {
+        let toolDepth = 0;
+        let aiMsgNode = null;
+        
+        while(true) {
+            if (targetAbortController.signal.aborted) break;
+            
+            const localProxyUrl = (localServerUrlInput ? localServerUrlInput.value.trim() : null) || 'http://localhost:3000';
+            const useProxy = localTerminalEnabled || window.location.hostname !== 'localhost';
+            
+            const payload = { model, system, messages, tools: anthropicTools, max_tokens: 4096 };
+            let res;
+            
+            if (useProxy) {
+                const proxyUrl = localTerminalEnabled ? `${localProxyUrl}/api/ai-proxy` : `/.netlify/functions/proxy-ai`;
+                res = await fetch(proxyUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ endpoint, key, body: payload, headers: { 'anthropic-version': '2023-06-01' } }),
+                    signal: targetAbortController.signal
+                });
+            } else {
+                res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+                    body: JSON.stringify(payload),
+                    signal: targetAbortController.signal
+                });
+            }
+
+            if (!res.ok) throw new Error(`MiniMax API Error ${res.status}`);
+            const data = await res.json();
+            
+            const content = data.content;
+            const toolCalls = content.filter(c => c.type === 'tool_use');
+            const thinking = content.find(c => c.type === 'thinking');
+            const textResponse = content.find(c => c.type === 'text');
+
+            if (textResponse || thinking) {
+                loading.remove();
+                if (!aiMsgNode) aiMsgNode = appendMessageOnly('ai', textResponse ? textResponse.text : "");
+                else if (textResponse) {
+                    aiMsgNode.querySelector('.message-content').innerHTML = marked.parse(textResponse.text);
+                }
+                
+                if (thinking) {
+                    appendReasoningStep(aiMsgNode, 'thought', "Thinking Process", '', thinking.thinking);
+                }
+                if (textResponse) addMessageToCurrent('ai', textResponse.text);
+            }
+
+            messages.push({ role: 'assistant', content: content });
+
+            if (toolCalls.length === 0) break;
+
+            loading.remove();
+            if(!aiMsgNode) aiMsgNode = appendMessageOnly('ai', "(Analyzing repository...)");
+
+            const toolResults = [];
+            for (const call of toolCalls) {
+                const toolName = call.name;
+                const toolArgs = call.input;
+                const toolDiv = appendToolCall(aiMsgNode, toolName, toolArgs);
+                const output = toolsMap[toolName] ? await toolsMap[toolName](toolArgs) : "Error";
+                markToolSuccess(toolDiv);
+                
+                toolResults.push({
+                    type: "tool_result",
+                    tool_use_id: call.id,
+                    content: typeof output === 'string' && output.length > 5000 
+                        ? `[LARGE CONTENT PRUNED - ${output.length} characters]. Partial: ${output.substring(0, 500)}...` 
+                        : output
+                });
+            }
+
+            messages.push({ role: 'user', content: toolResults });
+            toolDepth++;
+            chatHistory.appendChild(loading);
+        }
+    } catch (e) {
+        loading.remove();
+        appendMessageOnly('ai', `Error: ${e.message}`);
+    } finally {
+        loading.remove();
+        setProcessingState(false, targetChatId);
+        releaseWakeLock();
     }
 }
 

@@ -6,7 +6,7 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        const { endpoint, key, body } = JSON.parse(event.body);
+        const { endpoint, key, body, headers = {} } = JSON.parse(event.body);
         
         if (!endpoint || !key || !body) {
             return {
@@ -17,12 +17,15 @@ exports.handler = async (event, context) => {
 
         console.log(`[AI-PROXY] Proxying request to: ${endpoint}`);
 
+        const mergedHeaders = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`,
+            ...headers
+        };
+
         const response = await fetch(endpoint, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${key}`
-            },
+            headers: mergedHeaders,
             body: JSON.stringify(body)
         });
 

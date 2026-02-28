@@ -50,17 +50,19 @@ app.post('/api/shell', (req, res) => {
 
 // AI proxy endpoint for CORS-free requests
 app.post('/api/ai-proxy', async (req, res) => {
-    const { endpoint, key, body } = req.body;
+    const { endpoint, key, body, headers = {} } = req.body;
     if (!endpoint || !key || !body) return res.status(400).json({ error: "Missing required fields" });
     
     console.log(`[GIT-CHAT-LOCAL] Proxying AI request: ${endpoint}`);
     try {
+        const mergedHeaders = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`,
+            ...headers
+        };
         const response = await fetch(endpoint, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${key}`
-            },
+            headers: mergedHeaders,
             body: JSON.stringify(body)
         });
         const data = await response.json();
