@@ -1307,7 +1307,15 @@ const toolsMap = {
     run_lighthouse: () => ghRunLighthouse(),
     run_terminal_command: (args) => ghRunTerminalCommand(args.command, args.cwd),
     verify_and_fix: (args) => ghVerifyAndFix(args.command),
-    push_to_github: (args) => ghPushToGithub(args.commit_message)
+    push_to_github: (args) => ghPushToGithub(args.commit_message),
+    eval_javascript: (args) => {
+        try {
+            const result = eval(args.code);
+            return typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);
+        } catch(e) {
+            return `Error evaluating Javascript: ${e.message}`;
+        }
+    }
 };
 
 async function ghVerifyAndFix(command) {
@@ -1417,7 +1425,8 @@ Done. That's it. 3 steps max before you start editing.
         { name: "remember_this", description: "Save a fact about the user, their tech preferences, or project rules for long-term memory.", parameters: { type: "OBJECT", properties: { fact: { type: "STRING" }, category: { type: "STRING" } }, required: ["fact"] } },
         { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
         { name: "verify_and_fix", description: "AUTONOMOUS MODE: Provide a command (e.g. 'npm run build' or 'pytest'). The AI will run it, read errors, and automatically keep patching until it passes. Use this after making major changes. Note: This will auto-push staged changes.", parameters: { type: "OBJECT", properties: { command: { type: "STRING" } }, required: ["command"] } },
-        { name: "push_to_github", description: "FINALIZE: Commit and push all STAGED changes to GitHub in a single batch. Use this AFTER you have finished all your file edits. This triggers a single Netlify build.", parameters: { type: "OBJECT", properties: { commit_message: { type: "STRING" } } } }
+        { name: "push_to_github", description: "FINALIZE: Commit and push all STAGED changes to GitHub in a single batch. Use this AFTER you have finished all your file edits. This triggers a single Netlify build.", parameters: { type: "OBJECT", properties: { commit_message: { type: "STRING" } } } },
+        { name: "eval_javascript", description: "DYNAMIC TOOL CREATION: Write and execute arbitrary Javascript code strings in the browser context. This allows building any data parsing, mathematical modeling, or custom string manipulation logic directly 'on the job'. Returns the stringified output.", parameters: { type: "OBJECT", properties: { code: { type: "STRING" } }, required: ["code"] } }
     ];
 
     if (localTerminalEnabled) {
