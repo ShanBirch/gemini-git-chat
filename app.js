@@ -1965,7 +1965,8 @@ function getSharedTools() {
         { type: "function", function: { name: "search_code", description: "Search for specific code strings across the repo.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "read_file", description: "Read ENTIRE file. Slow on large files. Prefer view_file+grep_search.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
         { type: "function", function: { name: "write_file", description: "Full file overwrite. Only for new/tiny files.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } },
-        { type: "function", function: { name: "push_to_github", description: "Commits STAGED changes.", parameters: { type: "object", properties: { commit_message: { type: "string" } } } } }
+        { type: "function", function: { name: "push_to_github", description: "Commits STAGED changes.", parameters: { type: "object", properties: { commit_message: { type: "string" } } } } },
+        { type: "function", function: { name: "eval_javascript", description: "DYNAMIC TOOL CREATION: Execute JS dynamically to build tools on the fly.", parameters: { type: "object", properties: { code: { type: "string" } }, required: ["code"] } } }
     ];
     if (localTerminalEnabled) {
         tools.push({
