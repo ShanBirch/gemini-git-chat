@@ -17,6 +17,9 @@ const toggleSettingsBtn = document.getElementById('toggle-settings');
 const chatModelSelect = document.getElementById('chat-model-select');
 const imageInput = document.getElementById('image-input');
 const attachBtn = document.getElementById('attach-btn');
+  const recordBtn = document.getElementById('record-btn');
+  let recognition;
+  let isVoiceRecording = false;
 const imagePreviewContainer = document.getElementById('image-preview-container');
 const imagePreview = document.getElementById('image-preview');
 const removeImageBtn = document.getElementById('remove-image-btn');
@@ -222,6 +225,69 @@ function setupEventListeners() {
         imagePreviewContainer.style.display = 'none';
         imageInput.value = '';
     });
+  // Voice Recording Logic (Voice-to-Text)
+  if (recordBtn && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onresult = (event) => {
+          let finalTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+              if (event.results[i].isFinal) {
+                  finalTranscript += event.results[i][0].transcript;
+              }
+          }
+          if (finalTranscript) {
+              const start = chatInput.selectionStart;
+              const end = chatInput.selectionEnd;
+              const text = chatInput.value;
+              const before = text.substring(0, start);
+              const after = text.substring(end);
+              chatInput.value = before + (before && !before.endsWith(' ') ? ' ' : '') + finalTranscript + (after && !after.startsWith(' ') ? ' ' : '') + after;
+              chatInput.dispatchEvent(new Event('input', { bubbles: true }));
+              // Adjust height
+              chatInput.style.height = 'auto';
+              chatInput.style.height = chatInput.scrollHeight + 'px';
+          }
+      };
+
+      recognition.onend = () => {
+          isVoiceRecording = false;
+          recordBtn.classList.remove('recording');
+          recordBtn.title = "Record Audio";
+      };
+
+      recognition.onerror = (event) => {
+          console.error("Speech recognition error:", event.error);
+          isVoiceRecording = false;
+          recordBtn.classList.remove('recording');
+          recordBtn.title = "Record Audio";
+          if (event.error === 'not-allowed') {
+              alert("Microphone access denied.");
+          }
+      };
+
+      recordBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (isVoiceRecording) {
+              recognition.stop();
+          } else {
+              try {
+                  recognition.start();
+                  isVoiceRecording = true;
+                  recordBtn.classList.add('recording');
+                  recordBtn.title = "Stop Recording";
+              } catch (err) {
+                  console.error("Speech recognition start error:", err);
+              }
+          }
+      });
+  } else if (recordBtn) {
+      recordBtn.style.display = 'none';
+  }
+
 
     enableSyncBtn.addEventListener('click', initSupabase);
     
@@ -2469,4 +2535,5 @@ function updateAuthUI(user) {
         userInfo.style.display = 'none';
     }
 }
+
 

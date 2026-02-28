@@ -353,3 +353,6 @@ body {
     #chat-history { padding: 20px 16px; }
     .message-content { max-width: 90%; }
 }
+
+.icon-btn-ghost.recording { color: var(--error); animation: pulse 1.5s infinite; }
+@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
