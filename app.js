@@ -1663,7 +1663,7 @@ async function handleSend() {
 
         let aiMsgNode = null;
         let toolDepth = 0;
-        const MAX_TOOL_DEPTH = 100;
+        const MAX_TOOL_DEPTH = 1000;
         let hasEdited = false;
         let currentParts = parts;
         let searchOnlyStreak = 0; // consecutive rounds with no patch/write
@@ -1841,12 +1841,11 @@ async function handleSend() {
                 
                 // Escalating nudges — only add to first tool result per round
                 if (index === 0) {
-                    if (toolDepth === 8 && !hasEdited) {
-                        prunedResult += `\n\n🟡 SYSTEM NUDGE (Turn ${toolDepth}): You've been exploring for a while. What is your plan? Name the file and line range you intend to patch.`;
-                    } else if (toolDepth === 15 && !hasEdited) {
-                        prunedResult += `\n\n🟠 SYSTEM NUDGE (Turn ${toolDepth}): STOP SEARCHING. You have enough context. Make your best guess and call patch_file NOW. You can fix mistakes afterward.`;
-                    } else if (toolDepth === 22 && !hasEdited) {
-                        prunedResult += `\n\n🔴 SYSTEM ALERT (Turn ${toolDepth}): You are in a search loop. DO NOT call any search tool again. Either: (1) call patch_file with your best attempt, or (2) respond with a text message explaining what you're stuck on.`;
+                    if (toolDepth === 20 && !hasEdited) {
+                        prunedResult += `\n\n🟡 INFO: You've been exploring for a while (Turn ${toolDepth}). If you're stuck, try a broader search or ask for a hint!`;
+                    }
+                    if (toolDepth % 20 === 0 && toolDepth > 0) {
+                        console.log(`Tool Depth Checkpoint: Turn ${toolDepth}`);
                     }
                     
                     // Hard block: too many search-only rounds
@@ -2000,7 +1999,7 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
     try {
         let toolHistory = new Map();
         let toolDepth = 0;
-        const MAX_TOOL_DEPTH = 100;
+        const MAX_TOOL_DEPTH = 1000;
         let hasEdited = false;
         let aiMsgNode = null;
         let searchOnlyStreak = 0;
