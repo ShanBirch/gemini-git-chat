@@ -1,5 +1,4 @@
-const fetch = require('node-fetch');
-
+// No require('node-fetch') needed in Node 18+ environments like Netlify
 exports.handler = async (event, context) => {
     // Only allow POST requests
     if (event.httpMethod !== 'POST') {
