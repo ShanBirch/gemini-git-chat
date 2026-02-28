@@ -426,14 +426,11 @@ function deleteChat(id, e) {
 
 // --- Wake Lock ---
 async function requestWakeLock() {
+    BackgroundKeeper.start();
     if ('wakeLock' in navigator) {
         try {
             wakeLock = await navigator.wakeLock.request('screen');
-            BackgroundKeeper.start();
         } catch (err) { console.log("WakeLock failed"); }
-    } else {
-        // Fallback for browsers without WakeLock support
-        BackgroundKeeper.start();
     }
 }
 
