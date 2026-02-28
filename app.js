@@ -2225,13 +2225,14 @@ async function callMiniMaxAnthropic(model, message, image, loading) {
                 system, 
                 messages, 
                 tools: anthropicTools, 
-                max_tokens: model.toLowerCase().includes("text-01") ? 65536 : 4096,
+                max_tokens: model.toLowerCase().includes("text-01") ? 40000 : 4096,
                 tool_choice: { type: "auto" }
             };
 
-            if (model.toLowerCase().includes("text-01")) {
-                payload.thinking = { type: "enabled", budget_tokens: 32768 };
-            }
+            // Removed thinking block to force normal mode instead of deep research
+            // if (model.toLowerCase().includes("text-01")) {
+            //     payload.thinking = { type: "enabled", budget_tokens: 32768 };
+            // }
             
             let res;
             const anthropicHeaders = { 
