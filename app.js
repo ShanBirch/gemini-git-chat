@@ -470,7 +470,7 @@ function renderChatList() {
         const tab = document.createElement('div');
         tab.className = `chat-tab ${chat.id === currentChatId ? 'active' : ''}`;
         const status = processingChats.has(chat.id) ? '<span class="pulse-dot"></span>' : '';
-        tab.innerHTML = `${status}<span class="chat-tab-title">${chat.title}</span><button class="delete-chat-btn" title="Delete session">✕</button>`;
+        tab.innerHTML = `${status}<span class="chat-tab-title">${chat.title}</span><button class="delete-chat-btn" title="Delete session">🗑️</button>`;
         tab.addEventListener('click', () => switchChat(chat.id));
         tab.querySelector('.delete-chat-btn').addEventListener('click', (e) => deleteChat(chat.id, e));
         chatListEl.appendChild(tab);
