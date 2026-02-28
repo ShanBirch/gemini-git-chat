@@ -621,6 +621,8 @@ async function loadSettings() {
             // Only override if Netlify config exists and local is empty
             if (config.GEMINI_API_KEY && !geminiKeyInput.value) geminiKeyInput.value = config.GEMINI_API_KEY;
             if (config.GITHUB_TOKEN && !githubTokenInput.value) githubTokenInput.value = config.GITHUB_TOKEN;
+            if (config.DEEPSEEK_API_KEY && !deepseekKeyInput.value) deepseekKeyInput.value = config.DEEPSEEK_API_KEY;
+            if (config.MINIMAX_API_KEY && !minimaxKeyInput.value) minimaxKeyInput.value = config.MINIMAX_API_KEY;
             if (config.SUPABASE_URL && !supabaseUrlInput.value) supabaseUrlInput.value = config.SUPABASE_URL;
             if (config.SUPABASE_KEY && !supabaseKeyInput.value) supabaseKeyInput.value = config.SUPABASE_KEY;
             if (config.PRODUCTION_URL && !productionUrlInput.value) productionUrlInput.value = config.PRODUCTION_URL;
@@ -1580,7 +1582,11 @@ async function handleSend() {
     const targetChatId = currentChatId;
     if (!text && (!queuedMessages[targetChatId] || queuedMessages[targetChatId].length === 0)) return;
 
-    if (!currentAiModel) {
+    const chat = chats.find(c => c.id === targetChatId);
+    const model = mapModelName(chat ? chat.model : chatModelSelect.value);
+    const provider = getProvider(model);
+
+    if (provider === 'google' && !currentAiModel) {
         alert("Please map a Gemini Key in Settings first.");
         if (window.innerWidth <= 768) { openSidebar(); settingsContent.classList.add('active'); }
         return;
@@ -1624,10 +1630,8 @@ async function handleSend() {
     }
     activeAiNodes.set(targetChatId, loadingDiv);
 
-    const chat = chats.find(c => c.id === currentChatId);
     if (!chat) { loadingDiv.remove(); return; }
-    const model = mapModelName(chat.model || chatModelSelect.value);
-    const provider = getProvider(model);
+    // model and provider are already defined at top of handleSend
 
     if (provider === 'deepseek') {
         await callOpenAICompatibleModel(provider, model, messageToSend, imageDataToSend, loadingDiv);
@@ -1939,13 +1943,13 @@ function getSharedTools() {
     const tools = [
         { type: "function", function: { name: "line_count", description: "FAST: Get line count + size without reading content. Use before view_file.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
         { type: "function", function: { name: "list_files", description: "List files in a directory.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
-        { type: "function", function: { name: "get_repo_map", description: "Get the recursive file tree." } },
+        { type: "function", function: { name: "get_repo_map", description: "Get the entire repository structure recursively.", parameters: { type: "object", properties: {} } } },
         { type: "function", function: { name: "grep_search", description: "Find lines matching a pattern in a file. Use to locate line numbers before view_file.", parameters: { type: "object", properties: { path: { type: "string" }, query: { type: "string" } }, required: ["path", "query"] } } },
         { type: "function", function: { name: "view_file", description: "View specific lines. Always provide start_line and end_line.", parameters: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, required: ["path"] } } },
         { type: "function", function: { name: "patch_file", description: "Surgical single replacement.", parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "search", "replace"] } } },
         { type: "function", function: { name: "patch_file_multi", description: "PREFERRED: Multiple replacements in one commit.", parameters: { type: "object", properties: { path: { type: "string" }, patches: { type: "array", items: { type: "object", properties: { search: { type: "string" }, replace: { type: "string" } }, required: ["search", "replace"] } }, commit_message: { type: "string" } }, required: ["path", "patches"] } } },
-        { type: "function", function: { name: "get_build_status", description: "Check CI/Build logs." } },
-        { type: "function", function: { name: "run_lighthouse", description: "Audit live site performance." } },
+        { type: "function", function: { name: "get_build_status", description: "Check CI/Build logs.", parameters: { type: "object", properties: {} } } },
+        { type: "function", function: { name: "run_lighthouse", description: "Audit live site performance.", parameters: { type: "object", properties: {} } } },
         { type: "function", function: { name: "semantic_search", description: "Find code by meaning using Supabase.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
         { type: "function", function: { name: "remember_this", description: "Save user preferences.", parameters: { type: "object", properties: { fact: { type: "string" }, category: { type: "string" } }, required: ["fact"] } } },
         { type: "function", function: { name: "recall_memories", description: "Recall user history.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
@@ -1971,7 +1975,7 @@ function convertToAnthropicTools(tools) {
     return tools.map(t => ({
         name: t.function.name,
         description: t.function.description,
-        input_schema: t.function.parameters
+        input_schema: t.function.parameters || { type: "object", properties: {} }
     }));
 }
 
