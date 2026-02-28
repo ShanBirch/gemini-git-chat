@@ -1338,8 +1338,9 @@ function mapModelName(name) {
     if (normalized.includes("nano-banana-pro")) return "gemini-3-pro-image-preview";
     if (normalized.includes("nano-banana-2")) return "gemini-3.1-flash-image-preview";
     
-    if (normalized.includes("deepseek")) return "deepseek-v3.2";
-    if (normalized.includes("minimax")) return "MiniMax-M2.5";
+    if (normalized.includes("deepseek")) return "deepseek-reasoner";
+    if (normalized === "minimax-m2.5") return "MiniMax-M2.5";
+    if (normalized.includes("minimax")) return "MiniMax-Text-01";
     return normalized;
 }
 
@@ -2224,9 +2225,13 @@ async function callMiniMaxAnthropic(model, message, image, loading) {
                 system, 
                 messages, 
                 tools: anthropicTools, 
-                max_tokens: 4096,
+                max_tokens: model.toLowerCase().includes("text-01") ? 65536 : 4096,
                 tool_choice: { type: "auto" }
             };
+
+            if (model.toLowerCase().includes("text-01")) {
+                payload.thinking = { type: "enabled", budget_tokens: 32768 };
+            }
             
             let res;
             const anthropicHeaders = { 
