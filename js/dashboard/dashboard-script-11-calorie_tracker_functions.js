@@ -38,42 +38,15 @@ function selectPhotoMealType(type) {
 }
 
 function openMealTextInput(source) {
-    mealCameraSource = source || 'widget';
-    selectedMealType = autoDetectMealType();
-
-    // Check if modal exists
-    const modal = document.getElementById('meal-text-modal');
-    if (!modal) {
-        console.error('meal-text-modal not found');
-        showToast('Text input is not available. Please try the camera option.', 'error');
-        return;
-    }
-
-    // Update simple modal meal type bubbles
-    document.querySelectorAll('.simple-meal-type-bubble').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.type === selectedMealType);
-    });
-
-    const textarea = document.getElementById('simple-meal-input');
-    const submitBtn = document.getElementById('simple-meal-submit');
-
-    // Only add event listener once
-    if (!simpleMealInputInitialized && textarea) {
-        textarea.addEventListener('input', function() {
-            const btn = document.getElementById('simple-meal-submit');
-            if (btn) btn.disabled = this.value.trim().length === 0;
-        });
-        simpleMealInputInitialized = true;
-    }
-
-    if (textarea) textarea.value = '';
-    if (submitBtn) submitBtn.disabled = true;
-    if (modal) modal.classList.add('visible');
-
-    // Focus textarea after modal opens
+    console.log('openMealTextInput called, redirecting to new unified input modal');
+    openMealInputModal(source);
+    
+    // Give modal a tiny moment to render, then select 'text' method
     setTimeout(() => {
-        if (textarea) textarea.focus();
-    }, 100);
+        if (typeof selectInputMethod === 'function') {
+            selectInputMethod('text');
+        }
+    }, 50);
 }
 
 function closeMealTextModal() {
