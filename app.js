@@ -119,8 +119,8 @@ async function init() {
     document.getElementById('pull-to-refresh').style.transform = 'translateY(0)';
     document.getElementById('app').style.transform = 'translateY(0)';
     
-    await loadSettings();
     loadChats();
+    await loadSettings();
     setupEventListeners();
     initAuth();
     checkLocalTerminal();
@@ -367,9 +367,28 @@ function closeSidebar() { sidebar.classList.remove('open'); sidebarOverlay.class
 // --- Chat Management ---
 function loadChats() {
     const savedChats = localStorage.getItem('gitchat_sessions');
-    if (savedChats) { try { chats = JSON.parse(savedChats); } catch(e) { chats = []; } }
+    if (savedChats) { 
+        try { chats = JSON.parse(savedChats); } catch(e) { chats = []; } 
+        chats.forEach(c => {
+            if (!c.github_repo) c.github_repo = localStorage.getItem('gitchat_github_repo') || '';
+            if (!c.github_branch) c.github_branch = localStorage.getItem('gitchat_github_branch') || 'main';
+        });
+    }
     if (chats.length === 0) createNewChat();
-    else { currentChatId = chats[0].id; renderChatList(); renderCurrentChat(); }
+    else { 
+        currentChatId = chats[0].id; 
+        const firstChat = chats[0];
+        if (firstChat.github_repo) {
+            localStorage.setItem('gitchat_github_repo', firstChat.github_repo);
+            if (githubRepoSelect) githubRepoSelect.value = firstChat.github_repo;
+        }
+        if (firstChat.github_branch) {
+            localStorage.setItem('gitchat_github_branch', firstChat.github_branch);
+            if (githubBranchInput) githubBranchInput.value = firstChat.github_branch;
+        }
+        renderChatList(); 
+        renderCurrentChat(); 
+    }
 }
 
 const debouncedSync = debounce(() => pushChatsToCloud(), 3000);
@@ -380,7 +399,20 @@ function saveChats() {
 }
 
 function createNewChat() {
-    const newChat = { id: Date.now().toString(), title: "New Chat", messages: [], model: chatModelSelect.value, createdAt: new Date().toISOString() };
+    // Inherit repo from current chat, or fall back to localStorage
+    const currentChat = chats.find(c => c.id === currentChatId);
+    const inheritedRepo = currentChat?.github_repo || localStorage.getItem("gitchat_github_repo") || "";
+    const inheritedBranch = currentChat?.github_branch || localStorage.getItem("gitchat_github_branch") || "main";
+    
+    const newChat = { 
+        id: Date.now().toString(), 
+        title: "New Chat", 
+        messages: [], 
+        model: chatModelSelect.value, 
+        createdAt: new Date().toISOString(),
+        github_repo: inheritedRepo,
+        github_branch: inheritedBranch
+    };
     chats.unshift(newChat);
     currentChatId = newChat.id;
     setupAI();
@@ -398,6 +430,19 @@ function createNewChat() {
 function switchChat(id) {
     if (currentChatId === id) return;
     currentChatId = id;
+    
+    const chat = chats.find(c => c.id === id);
+    if (chat) {
+        if (chat.github_repo) {
+            localStorage.setItem('gitchat_github_repo', chat.github_repo);
+            if (githubRepoSelect) githubRepoSelect.value = chat.github_repo;
+        }
+        if (chat.github_branch) {
+            localStorage.setItem('gitchat_github_branch', chat.github_branch);
+            if (githubBranchInput) githubBranchInput.value = chat.github_branch;
+        }
+    }
+    
     renderChatList();
     renderCurrentChat();
     
@@ -639,11 +684,21 @@ async function loadSettings() {
 }
 
 function saveSettings() {
+    const repo = githubRepoSelect.value;
+    const branch = githubBranchInput.value.trim();
+    
     localStorage.setItem('gitchat_gemini_key', geminiKeyInput.value.trim());
     localStorage.setItem('gitchat_github_token', githubTokenInput.value.trim());
-    localStorage.setItem('gitchat_github_repo', githubRepoSelect.value);
-    localStorage.setItem('gitchat_github_branch', githubBranchInput.value.trim());
+    localStorage.setItem('gitchat_github_repo', repo);
+    localStorage.setItem('gitchat_github_branch', branch);
     localStorage.setItem('gitchat_deepseek_key', deepseekKeyInput.value.trim());
+    
+    const chat = chats.find(c => c.id === currentChatId);
+    if (chat) {
+        chat.github_repo = repo;
+        chat.github_branch = branch;
+        saveChats();
+    }
     localStorage.setItem('gitchat_minimax_key', minimaxKeyInput.value.trim());
     localStorage.setItem('gitchat_production_url', productionUrlInput.value.trim());
     localStorage.setItem('gitchat_local_server_url', localServerUrlInput.value.trim());
@@ -749,7 +804,7 @@ async function pushChatsToCloud() {
     if (!supabase || !currentChatId) return;
     
     // 1. Push Metadata Index (No messages, just summary info)
-    const index = chats.map(c => ({ id: c.id, title: c.title, model: c.model, updated: Date.now() }));
+    const index = chats.map(c => ({ id: c.id, title: c.title, model: c.model, updated: Date.now(), github_repo: c.github_repo || '', github_branch: c.github_branch || 'main' }));
     await supabase.from('app_state').upsert({ id: 'chat_index', data: index });
     
     // 2. Push Current Chat Content (Only the active one)
@@ -2414,3 +2469,4 @@ function updateAuthUI(user) {
         userInfo.style.display = 'none';
     }
 }
+
