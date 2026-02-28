@@ -1244,6 +1244,50 @@ async function ghPushToGithub(commitMessage = "Apply batched changes from Shanbo
     }
 }
 
+async function systemUpgrade(path, searchStr, replaceStr, commit_message) {
+    try {
+        const repo = "ShanBirch/gemini-git-chat";
+        const branch = "main";
+        const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
+        
+        // 1. Get current file and SHA
+        const res = await fetch(url, { headers: githubHeaders });
+        if (!res.ok) throw new Error(`Failed to fetch ${path} from ${repo}`);
+        const data = await res.json();
+        
+        let content = new TextDecoder('utf-8').decode(new Uint8Array(atob(data.content.replace(/\s/g, '')).split('').map(c => c.charCodeAt(0))));
+        
+        // 2. Patch content
+        if (!content.includes(searchStr)) return `ERROR: Search string not found in ${repo}/${path}.`;
+        const matches = content.match(new RegExp(searchStr.replace(/[.*+?^${}()|[\]\\]/g, '\\async function ghLineCount(path) {'), 'g')) || [];
+        if (matches.length > 1) return `ERROR: Search string found ${matches.length} times. Make it more unique.`;
+        
+        content = content.replace(searchStr, replaceStr);
+        
+        // 3. Commit back
+        const putUrl = `https://api.github.com/repos/${repo}/contents/${path}`;
+        const putRes = await fetch(putUrl, {
+            method: 'PUT',
+            headers: { ...githubHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: commit_message || `System Upgrade: ${path}`,
+                content: btoa(unescape(encodeURIComponent(content))),
+                sha: data.sha,
+                branch: branch
+            })
+        });
+        
+        if (!putRes.ok) {
+            const err = await putRes.json();
+            throw new Error(`Push failed: ${err.message}`);
+        }
+        
+        return `SYSTEM UPGRADE SUCCESSFUL! Successfully patched and pushed ${path} directly to ${repo}. Netlify will deploy this to your brain shortly.`;
+    } catch (e) {
+        return `System Upgrade Error: ${e.message}`;
+    }
+}
+
 async function ghLineCount(path) {
     let content = fileCache.get(path);
     if (!content) {
@@ -1315,7 +1359,8 @@ const toolsMap = {
         } catch(e) {
             return `Error evaluating Javascript: ${e.message}`;
         }
-    }
+    },
+    system_upgrade: (args) => systemUpgrade(args.path, args.search, args.replace, args.commit_message)
 };
 
 async function ghVerifyAndFix(command) {
@@ -1426,7 +1471,8 @@ Done. That's it. 3 steps max before you start editing.
         { name: "recall_memories", description: "Retrieve relevant facts or preferences about the user and their coding style.", parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
         { name: "verify_and_fix", description: "AUTONOMOUS MODE: Provide a command (e.g. 'npm run build' or 'pytest'). The AI will run it, read errors, and automatically keep patching until it passes. Use this after making major changes. Note: This will auto-push staged changes.", parameters: { type: "OBJECT", properties: { command: { type: "STRING" } }, required: ["command"] } },
         { name: "push_to_github", description: "FINALIZE: Commit and push all STAGED changes to GitHub in a single batch. Use this AFTER you have finished all your file edits. This triggers a single Netlify build.", parameters: { type: "OBJECT", properties: { commit_message: { type: "STRING" } } } },
-        { name: "eval_javascript", description: "DYNAMIC TOOL CREATION: Write and execute arbitrary Javascript code strings in the browser context. This allows building any data parsing, mathematical modeling, or custom string manipulation logic directly 'on the job'. Returns the stringified output.", parameters: { type: "OBJECT", properties: { code: { type: "STRING" } }, required: ["code"] } }
+        { name: "eval_javascript", description: "DYNAMIC TOOL CREATION: Write and execute arbitrary Javascript code strings in the browser context. This allows building any data parsing, mathematical modeling, or custom string manipulation logic directly 'on the job'. Returns the stringified output.", parameters: { type: "OBJECT", properties: { code: { type: "STRING" } }, required: ["code"] } },
+        { name: "system_upgrade", description: "SELF-EVOLUTION: Modify and update your OWN source code directly on GitHub (ShanBirch/gemini-git-chat), completely independently of the user's active repository. Bypasses staging and commits instantly.", parameters: { type: "OBJECT", properties: { path: { type: "STRING" }, search: { type: "STRING" }, replace: { type: "STRING" }, commit_message: { type: "STRING" } }, required: ["path", "search", "replace"] } }
     ];
 
     if (localTerminalEnabled) {
@@ -1966,7 +2012,8 @@ function getSharedTools() {
         { type: "function", function: { name: "read_file", description: "Read ENTIRE file. Slow on large files. Prefer view_file+grep_search.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
         { type: "function", function: { name: "write_file", description: "Full file overwrite. Only for new/tiny files.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "content", "commit_message"] } } },
         { type: "function", function: { name: "push_to_github", description: "Commits STAGED changes.", parameters: { type: "object", properties: { commit_message: { type: "string" } } } } },
-        { type: "function", function: { name: "eval_javascript", description: "DYNAMIC TOOL CREATION: Execute JS dynamically to build tools on the fly.", parameters: { type: "object", properties: { code: { type: "string" } }, required: ["code"] } } }
+        { type: "function", function: { name: "eval_javascript", description: "DYNAMIC TOOL CREATION: Execute JS dynamically to build tools on the fly.", parameters: { type: "object", properties: { code: { type: "string" } }, required: ["code"] } } },
+        { type: "function", function: { name: "system_upgrade", description: "SELF-EVOLUTION: Update your own source code instantly.", parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" }, commit_message: { type: "string" } }, required: ["path", "search", "replace"] } } }
     ];
     if (localTerminalEnabled) {
         tools.push({
