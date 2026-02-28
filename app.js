@@ -2022,12 +2022,32 @@ CRITICAL: When updating code, provide the FULL file to 'write_file'. Use 'view_f
             
             while (retryCount <= maxRetries) {
                 try {
-                    res = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-                        body: JSON.stringify({ model, messages, tools, tool_choice: "auto" }),
-                        signal: targetAbortController.signal
-                    });
+                    // CORS Bypass: If we have a local terminal or are on Netlify, proxy the call
+                    const localProxyUrl = (localServerUrlInput ? localServerUrlInput.value.trim() : null) || 'http://localhost:3000';
+                    const useProxy = localTerminalEnabled || window.location.hostname !== 'localhost';
+                    
+                    if (useProxy) {
+                        const proxyUrl = localTerminalEnabled ? `${localProxyUrl}/api/ai-proxy` : `/.netlify/functions/proxy-ai`;
+                        res = await fetch(proxyUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                endpoint: endpoint,
+                                key: key,
+                                body: { model, messages, tools, tool_choice: "auto" }
+                            }),
+                            signal: targetAbortController.signal
+                        });
+                    } else {
+                        // Direct fetch (might fail with CORS)
+                        res = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+                            body: JSON.stringify({ model, messages, tools, tool_choice: "auto" }),
+                            signal: targetAbortController.signal
+                        });
+                    }
+
                     if (res.ok) break;
                     if (res.status === 429 || res.status >= 500) {
                         throw new Error(`Status ${res.status}`);

@@ -48,6 +48,29 @@ app.post('/api/shell', (req, res) => {
     });
 });
 
+// AI proxy endpoint for CORS-free requests
+app.post('/api/ai-proxy', async (req, res) => {
+    const { endpoint, key, body } = req.body;
+    if (!endpoint || !key || !body) return res.status(400).json({ error: "Missing required fields" });
+    
+    console.log(`[GIT-CHAT-LOCAL] Proxying AI request: ${endpoint}`);
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${key}`
+            },
+            body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (e) {
+        console.error(`[GIT-CHAT-LOCAL] Proxy Error:`, e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.listen(PORT, 'localhost', () => {
     console.log(`\n=================================================`);
     console.log(`🚀 Shanbot Local Server running at http://localhost:${PORT}`);
