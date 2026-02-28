@@ -543,9 +543,9 @@ function renderCurrentChat() {
     }
 }
 
-function addMessageToCurrent(role, content) { addMessageToChat(currentChatId, role, content); }
+function addMessageToCurrent(role, content, image = null) { addMessageToChat(currentChatId, role, content, image); }
 
-function addMessageToChat(chatId, role, content) {
+function addMessageToChat(chatId, role, content, image = null) {
     const chat = chats.find(c => c.id === chatId);
     if (!chat) return;
     if (chat.messages.length === 0 && role === 'user') {
@@ -553,7 +553,7 @@ function addMessageToChat(chatId, role, content) {
         renderChatList();
         if (chatId === currentChatId) mobileChatTitle.textContent = chat.title;
     }
-    chat.messages.push({ role, content, image: currentAttachedImage });
+    chat.messages.push({ role, content, image: image });
     saveChats();
     
     // Auto-name after first AI response
@@ -1629,9 +1629,9 @@ function markToolSuccess(toolDiv) {
 
 function scrollToBottom() { chatHistory.scrollTop = chatHistory.scrollHeight; }
 
-async function handleSend() {
-    const text = chatInput.value.trim();
-    const targetChatId = currentChatId;
+async function handleSend(explicitChatId = null) {
+    const targetChatId = explicitChatId || currentChatId;
+    const text = explicitChatId ? "" : chatInput.value.trim();
     if (!text && (!queuedMessages[targetChatId] || queuedMessages[targetChatId].length === 0)) return;
 
     const chat = chats.find(c => c.id === targetChatId);
@@ -1659,12 +1659,14 @@ async function handleSend() {
     let messageToSend = text;
     let imageDataToSend = currentAttachedImage;
 
-    if (text || currentAttachedImage) {
+    if (text || imageDataToSend) {
         appendMessageOnly('user', text, targetChatId);
-        addMessageToChat(targetChatId, 'user', text);
-        currentAttachedImage = null;
-        imagePreviewContainer.style.display = 'none';
-        imageInput.value = '';
+        addMessageToChat(targetChatId, 'user', text, imageDataToSend);
+        if (!explicitChatId) {
+            currentAttachedImage = null;
+            imagePreviewContainer.style.display = 'none';
+            imageInput.value = '';
+        }
     } else if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) {
         messageToSend = queuedMessages[targetChatId].join('\n');
         queuedMessages[targetChatId] = [];
@@ -1953,7 +1955,7 @@ async function handleSend() {
             sendCompletionNotification(finalContent);
         }
         lastRoundStartTime = Date.now(); // Reset for next potential queued message
-        if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) handleSend();
+        if (queuedMessages[targetChatId] && queuedMessages[targetChatId].length > 0) handleSend(targetChatId);
     }
 }
 
