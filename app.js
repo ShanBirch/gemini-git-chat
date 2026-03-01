@@ -206,15 +206,45 @@ function setupEventListeners() {
         if (file && file.type.startsWith('image/')) {
             const reader = new FileReader();
             reader.onload = (event) => {
-                const base64Data = event.target.result.split(',')[1];
-                currentAttachedImage = {
-                    mimeType: file.type,
-                    data: base64Data
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 1200;
+                    const MAX_HEIGHT = 1200;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width *= MAX_HEIGHT / height;
+                            height = MAX_HEIGHT;
+                        }
+                    }
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Use JPEG format for consistent size reduction, unless it's a PNG and we need transparency, 
+                    // but for general chat images JPEG is safer and smaller.
+                    const outputType = (file.type === 'image/png') ? 'image/png' : 'image/jpeg';
+                    const dataUrl = canvas.toDataURL(outputType, 0.8);
+                    
+                    const base64Data = dataUrl.split(',')[1];
+                    currentAttachedImage = {
+                        mimeType: outputType,
+                        data: base64Data
+                    };
+                    imagePreview.src = dataUrl;
+                    imagePreviewContainer.style.display = 'flex';
+                    imageInput.value = '';
                 };
-                imagePreview.src = event.target.result;
-                imagePreviewContainer.style.display = 'flex';
-                // Reset input value so same file can be selected again
-                imageInput.value = '';
+                img.src = event.target.result;
             };
             reader.readAsDataURL(file);
         }
@@ -1753,7 +1783,7 @@ function scrollToBottom() { chatHistory.scrollTop = chatHistory.scrollHeight; }
 async function handleSend(explicitChatId = null) {
     const targetChatId = explicitChatId || currentChatId;
     const text = explicitChatId ? "" : chatInput.value.trim();
-    if (!text && (!queuedMessages[targetChatId] || queuedMessages[targetChatId].length === 0)) return;
+    if (!text && !currentAttachedImage && (!queuedMessages[targetChatId] || queuedMessages[targetChatId].length === 0)) return;
 
     const chat = chats.find(c => c.id === targetChatId);
     const model = mapModelName(chat ? chat.model : chatModelSelect.value);
