@@ -1781,17 +1781,27 @@ function markToolSuccess(toolDiv) {
 function scrollToBottom() { chatHistory.scrollTop = chatHistory.scrollHeight; }
 
 async function handleSend(explicitChatId = null) {
-    const targetChatId = explicitChatId || currentChatId;
-    const text = explicitChatId ? "" : chatInput.value.trim();
-    if (!text && !currentAttachedImage && (!queuedMessages[targetChatId] || queuedMessages[targetChatId].length === 0)) return;
+    try {
+        if (!sendBtn || !chatInput) {
+            console.error("Required DOM elements not found");
+            return;
+        }
+        const targetChatId = explicitChatId || currentChatId;
+        const text = explicitChatId ? "" : chatInput.value.trim();
+        if (!text && !currentAttachedImage && (!queuedMessages[targetChatId] || queuedMessages[targetChatId].length === 0)) return;
 
-    const chat = chats.find(c => c.id === targetChatId);
-    const model = mapModelName(chat ? chat.model : chatModelSelect.value);
-    const provider = getProvider(model);
+        const chat = chats.find(c => c.id === targetChatId);
+        const model = mapModelName(chat ? chat.model : chatModelSelect.value);
+        const provider = getProvider(model);
 
-    if (provider === 'google' && !currentAiModel) {
-        alert("Please map a Gemini Key in Settings first.");
-        if (window.innerWidth <= 768) { openSidebar(); settingsContent.classList.add('active'); }
+        if (provider === 'google' && !currentAiModel) {
+            alert("Please map a Gemini Key in Settings first.");
+            if (window.innerWidth <= 768) { openSidebar(); settingsContent.classList.add('active'); }
+            return;
+        }
+    } catch (err) {
+        console.error("Error in handleSend:", err);
+        alert("An error occurred. Check console for details.");
         return;
     }
 
