@@ -2549,6 +2549,11 @@ async function callMiniMaxAnthropic(model, message, image, loading) {
 
 document.addEventListener('DOMContentLoaded', init);
 
+// Call init immediately if DOM is already ready (for ES modules)
+if (document.readyState !== 'loading') {
+    init();
+}
+
 function initAuth() {
     const user = window.netlifyIdentity.currentUser();
     updateAuthUI(user);
